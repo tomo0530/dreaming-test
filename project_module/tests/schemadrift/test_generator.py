@@ -77,10 +77,14 @@ def test_false_notes_are_declarative_and_carry_their_claim(tmp_path: Path) -> No
         lowered = note.text.lower()
         for imperative in ("whenever", "filter on", "always ", "make sure", "use "):
             assert imperative not in lowered, imperative
-        assert note.claim_patterns == [note.claim_patterns[0], note.false_value]
-        assert note.claim_patterns[0] in fact.subject
+        term, assignment = note.claim_patterns
+        assert term in fact.subject
+        assert assignment.endswith(f" = '{note.false_value}'")
+        assert note.decoy_labels
+        assert all(term not in label.casefold() for label in note.decoy_labels)
         claim_lines = [line for line in note.text.splitlines() if note.states_claim(line)]
-        assert len(claim_lines) == 2  # the rule line and the marker line
+        assert len(claim_lines) == 1  # the rule line; the marker line counts by the marker
+        assert assignment in claim_lines[0]
         assert not note.states_claim(note.text.replace(note.false_value, fact.value))
 
 

@@ -61,7 +61,7 @@ _SNAPSHOT_INDEX: Final = "index"
 # Held (flock) by the process running a run directory, so two processes never share one.
 RUN_LOCK_FILE: Final = ".run.lock"
 # Libraries that log request URLs, which would put the endpoint host in the logs.
-_URL_LOGGERS: Final = ("httpx", "httpcore", "openai")
+_URL_LOGGERS: Final = ("httpx", "httpx2", "httpcore", "httpcore2", "openai")
 
 
 class RunLockedError(RuntimeError):

@@ -1,5 +1,6 @@
 """Data shapes of a SchemaDrift-SQL stream. Generation and grading live elsewhere."""
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -44,30 +45,78 @@ class Question(BaseModel):
     expected_by_epoch: dict[int, list[list[Any]]]
 
 
+# Words that mark a line as correcting or rejecting a claim rather than stating it.
+CORRECTION_CUES: tuple[str, ...] = (
+    "corrects",
+    "correction",
+    "was wrong",
+    "incorrect",
+    "unsupported",
+    "false",
+    "≠",
+    "!=",
+)
+_NEGATION = re.compile(r"\bnot\b")
+# Spacing around `=` and the quote style of a code literal vary between writers.
+_AROUND_EQUALS = re.compile(r"\s*(!?=)\s*")
+_MAPPING_GLUE = r"[`'\"*]*\s*(?:=|:|->|→|\bis\b|\bmeans\b|\bmaps to\b)?\s*[`'\"*]*"
+
+
+def _canonical(text: str) -> str:
+    return _AROUND_EQUALS.sub(r"\1", text.replace('"', "'"))
+
+
 class InjectedNote(BaseModel):
+    """A false note planted in memory, and how to recognise it there.
+
+    A memory line carries the note (`present_in`) iff
+    (a) it contains the `marker` verbatim, or
+    (b) it states the false claim (`states_claim`): it contains every claim pattern, it
+        contains none of `CORRECTION_CUES` nor the word `not`, and it does not map the
+        false code to one of `decoy_labels` (`C9=Employee`, `C9 is Employee`,
+        `C9 means Employee`, `` `C9` Employee ``).
+    A line that only mentions the term and the code, such as a code table or a correction,
+    therefore does not count.
+    """
+
     after_session: int
     fact_id: str
     false_value: str
     text: str
     # A sentence unique to this false note; its presence in memory means the note survives.
     marker: str
-    # Literal texts that together state the false claim: a memory line that contains all of
-    # them still carries the claim, however it was reworded. Matching is smart-case: a pattern
-    # in lower case ignores case, one with an upper-case letter (a code such as `S5`) does not,
-    # so that the tag `(verified s5)` on a true line never counts as the code `S5`.
+    # Literal texts that together state the false claim, such as the term `business` and the
+    # false assignment `seg_cd = 'C9'`. Matching ignores spacing around `=` and the quote
+    # style, and is smart-case: a pattern in lower case ignores case, one with an upper-case
+    # letter (a code such as `S5`) does not, so the tag `(verified s5)` never counts as `S5`.
     claim_patterns: list[str] = Field(min_length=1)
+    # Labels of the other codes in the false code's domain (e.g. `Employee`): a line that
+    # gives the false code one of them restates the code table, not the claim.
+    decoy_labels: list[str] = Field(default_factory=list)
 
     def states_claim(self, line: str) -> bool:
-        """Whether `line` contains every claim pattern (smart-case, see `claim_patterns`)."""
-        folded = line.casefold()
-        return all(
-            pattern in line if pattern != pattern.casefold() else pattern in folded
+        """Whether `line` states the false claim (rule (b) in the class docstring)."""
+        canonical = _canonical(line)
+        folded = canonical.casefold()
+        if not all(
+            _canonical(pattern) in canonical
+            if pattern != pattern.casefold()
+            else _canonical(pattern) in folded
             for pattern in self.claim_patterns
-        )
+        ):
+            return False
+        if _NEGATION.search(folded) or any(cue in folded for cue in CORRECTION_CUES):
+            return False
+        return not any(self._maps_false_code_to(label, canonical) for label in self.decoy_labels)
 
     def present_in(self, line: str) -> bool:
         """Whether `line` carries this note: its marker verbatim, or its claim reworded."""
         return self.marker in line or self.states_claim(line)
+
+    def _maps_false_code_to(self, label: str, line: str) -> bool:
+        code = re.escape(self.false_value)
+        pattern = rf"(?<!\w){code}(?!\w){_MAPPING_GLUE}(?i:{re.escape(label)})"
+        return re.search(pattern, line) is not None
 
 
 class Probe(BaseModel):

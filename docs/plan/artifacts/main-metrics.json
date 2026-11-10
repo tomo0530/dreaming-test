@@ -1,0 +1,388 @@
+{
+  "main-20261110T161346Z": {
+    "arms": [
+      "A0",
+      "A1",
+      "A2",
+      "A3",
+      "A4",
+      "A5"
+    ],
+    "streams": {
+      "analyzed": [
+        "main-01",
+        "main-02",
+        "main-03",
+        "main-04",
+        "main-05",
+        "main-06",
+        "main-07",
+        "main-08",
+        "main-09",
+        "main-10",
+        "main-11",
+        "main-12",
+        "main-13",
+        "main-14",
+        "main-15",
+        "main-16",
+        "main-17",
+        "main-18",
+        "main-19",
+        "main-20"
+      ],
+      "excluded": {}
+    },
+    "primary": {
+      "treatment": "A4",
+      "control": "A1",
+      "mean": -0.01111111111111111,
+      "low": -0.04166666666666667,
+      "high": 0.022222222222222233,
+      "n": 20,
+      "verdict": "not_shown",
+      "practical_target_met": false
+    },
+    "exploratory": {
+      "A4-A3": {
+        "treatment": "A4",
+        "control": "A3",
+        "mean": -0.02361111111111111,
+        "low": -0.04930555555555556,
+        "high": 0.0020833333333333316,
+        "n": 20
+      },
+      "A4-A2": {
+        "treatment": "A4",
+        "control": "A2",
+        "mean": -0.07083333333333333,
+        "low": -0.0916840277777778,
+        "high": -0.04861111111111112,
+        "n": 20
+      },
+      "A4-A0": {
+        "treatment": "A4",
+        "control": "A0",
+        "mean": -0.061111111111111095,
+        "low": -0.08472222222222218,
+        "high": -0.036805555555555564,
+        "n": 20
+      },
+      "A1-A0": {
+        "treatment": "A1",
+        "control": "A0",
+        "mean": -0.05,
+        "low": -0.07847222222222223,
+        "high": -0.02291666666666667,
+        "n": 20
+      },
+      "A5-A0": {
+        "treatment": "A5",
+        "control": "A0",
+        "mean": 0.11180555555555553,
+        "low": 0.075,
+        "high": 0.14652777777777776,
+        "n": 20
+      }
+    },
+    "by_arm": {
+      "A0": {
+        "n_streams": 20,
+        "accuracy": 0.8256944444444445,
+        "accuracy_ci": {
+          "mean": 0.8256944444444445,
+          "low": 0.7909722222222223,
+          "high": 0.861111111111111,
+          "n": 20
+        },
+        "score": 0.8256944444444445,
+        "accuracy_q_inj": 0.975,
+        "accuracy_q_natural": 0.8121212121212121,
+        "session_accuracy": {
+          "1": 0.8166666666666667,
+          "2": 0.8416666666666666,
+          "3": 0.8333333333333334,
+          "4": 0.8583333333333334,
+          "5": 0.85,
+          "6": 0.8083333333333333,
+          "7": 0.825,
+          "8": 0.8833333333333334,
+          "9": 0.8,
+          "10": 0.8583333333333334,
+          "11": 0.7583333333333333,
+          "12": 0.775
+        },
+        "error_breakdown": {
+          "correct": 1189,
+          "stale": 86,
+          "sql_error": 0,
+          "wrong_result": 152,
+          "no_submission": 13
+        },
+        "stale_rate": 0.059722222222222225,
+        "stale_rate_drift_dependent": 0.11878453038674033,
+        "probe_accuracy": null,
+        "probe_accuracy_injected": null,
+        "false_note": null,
+        "cost_per_stream_usd": 0.03809463475,
+        "cost_by_component_usd": {
+          "online": 0.03809463475
+        },
+        "cost_per_correct_usd": 0.0006407844365012616
+      },
+      "A1": {
+        "n_streams": 20,
+        "accuracy": 0.7756944444444445,
+        "accuracy_ci": {
+          "mean": 0.7756944444444445,
+          "low": 0.73125,
+          "high": 0.81875,
+          "n": 20
+        },
+        "score": 0.7756944444444445,
+        "accuracy_q_inj": 0.9416666666666667,
+        "accuracy_q_natural": 0.7606060606060606,
+        "session_accuracy": {
+          "1": 0.7916666666666667,
+          "2": 0.8166666666666667,
+          "3": 0.825,
+          "4": 0.9,
+          "5": 0.8,
+          "6": 0.775,
+          "7": 0.7916666666666667,
+          "8": 0.8333333333333334,
+          "9": 0.675,
+          "10": 0.7416666666666667,
+          "11": 0.6583333333333333,
+          "12": 0.7
+        },
+        "error_breakdown": {
+          "correct": 1117,
+          "stale": 130,
+          "sql_error": 0,
+          "wrong_result": 164,
+          "no_submission": 29
+        },
+        "stale_rate": 0.09027777777777778,
+        "stale_rate_drift_dependent": 0.17955801104972377,
+        "probe_accuracy": 0.9770833333333333,
+        "probe_accuracy_injected": 1.0,
+        "false_note": {
+          "injections": 40,
+          "corrections": 39,
+          "correction_rate": 0.975,
+          "survival_rate": 0.02857142857142857
+        },
+        "cost_per_stream_usd": 0.128192722,
+        "cost_by_component_usd": {
+          "consolidation": 0.10155217775,
+          "online": 0.02471240175,
+          "probe": 0.0019281425
+        },
+        "cost_per_correct_usd": 0.002295303885407341
+      },
+      "A2": {
+        "n_streams": 20,
+        "accuracy": 0.8354166666666666,
+        "accuracy_ci": {
+          "mean": 0.8354166666666668,
+          "low": 0.7993055555555556,
+          "high": 0.8715277777777779,
+          "n": 20
+        },
+        "score": 0.8354166666666666,
+        "accuracy_q_inj": 0.975,
+        "accuracy_q_natural": 0.8227272727272726,
+        "session_accuracy": {
+          "1": 0.8333333333333334,
+          "2": 0.8666666666666666,
+          "3": 0.8666666666666666,
+          "4": 0.85,
+          "5": 0.8083333333333333,
+          "6": 0.7916666666666667,
+          "7": 0.8416666666666666,
+          "8": 0.8916666666666666,
+          "9": 0.8083333333333333,
+          "10": 0.8833333333333334,
+          "11": 0.775,
+          "12": 0.8083333333333333
+        },
+        "error_breakdown": {
+          "correct": 1203,
+          "stale": 95,
+          "sql_error": 0,
+          "wrong_result": 131,
+          "no_submission": 11
+        },
+        "stale_rate": 0.06597222222222222,
+        "stale_rate_drift_dependent": 0.13121546961325967,
+        "probe_accuracy": 0.9354166666666667,
+        "probe_accuracy_injected": 1.0,
+        "false_note": null,
+        "cost_per_stream_usd": 0.05538784625,
+        "cost_by_component_usd": {
+          "embedding": 0.008858603,
+          "online": 0.03765697725,
+          "probe": 0.008872266
+        },
+        "cost_per_correct_usd": 0.0009208286990856192
+      },
+      "A3": {
+        "n_streams": 20,
+        "accuracy": 0.7881944444444444,
+        "accuracy_ci": {
+          "mean": 0.7881944444444444,
+          "low": 0.7506944444444446,
+          "high": 0.8263888888888887,
+          "n": 20
+        },
+        "score": 0.7881944444444444,
+        "accuracy_q_inj": 0.7416666666666667,
+        "accuracy_q_natural": 0.7924242424242424,
+        "session_accuracy": {
+          "1": 0.8166666666666667,
+          "2": 0.8583333333333334,
+          "3": 0.8166666666666667,
+          "4": 0.775,
+          "5": 0.7916666666666667,
+          "6": 0.7333333333333334,
+          "7": 0.8083333333333333,
+          "8": 0.8666666666666666,
+          "9": 0.7,
+          "10": 0.7666666666666667,
+          "11": 0.7333333333333333,
+          "12": 0.7916666666666667
+        },
+        "error_breakdown": {
+          "correct": 1135,
+          "stale": 102,
+          "sql_error": 1,
+          "wrong_result": 181,
+          "no_submission": 21
+        },
+        "stale_rate": 0.07083333333333333,
+        "stale_rate_drift_dependent": 0.1408839779005525,
+        "probe_accuracy": 0.11875,
+        "probe_accuracy_injected": 0.0,
+        "false_note": {
+          "injections": 40,
+          "corrections": 0,
+          "correction_rate": 0.0,
+          "survival_rate": 1.0
+        },
+        "cost_per_stream_usd": 0.04165160475,
+        "cost_by_component_usd": {
+          "consolidation": 0.006760254,
+          "online": 0.028921129500000003,
+          "probe": 0.00597022125
+        },
+        "cost_per_correct_usd": 0.0007339489823788547
+      },
+      "A4": {
+        "n_streams": 20,
+        "accuracy": 0.7645833333333333,
+        "accuracy_ci": {
+          "mean": 0.7645833333333333,
+          "low": 0.725,
+          "high": 0.800017361111111,
+          "n": 20
+        },
+        "score": 0.7645833333333333,
+        "accuracy_q_inj": 0.9416666666666667,
+        "accuracy_q_natural": 0.7484848484848485,
+        "session_accuracy": {
+          "1": 0.7833333333333333,
+          "2": 0.8416666666666666,
+          "3": 0.8583333333333334,
+          "4": 0.8833333333333334,
+          "5": 0.8416666666666666,
+          "6": 0.75,
+          "7": 0.7583333333333333,
+          "8": 0.8083333333333333,
+          "9": 0.6583333333333333,
+          "10": 0.6666666666666667,
+          "11": 0.6416666666666667,
+          "12": 0.6833333333333333
+        },
+        "error_breakdown": {
+          "correct": 1101,
+          "stale": 143,
+          "sql_error": 1,
+          "wrong_result": 165,
+          "no_submission": 30
+        },
+        "stale_rate": 0.09930555555555555,
+        "stale_rate_drift_dependent": 0.19751381215469613,
+        "probe_accuracy": 0.9645833333333333,
+        "probe_accuracy_injected": 1.0,
+        "false_note": {
+          "injections": 40,
+          "corrections": 40,
+          "correction_rate": 1.0,
+          "survival_rate": 0.02857142857142857
+        },
+        "cost_per_stream_usd": 0.10982476000000001,
+        "cost_by_component_usd": {
+          "consolidation": 0.08459629625000001,
+          "online": 0.02339452625,
+          "probe": 0.0018339375
+        },
+        "cost_per_correct_usd": 0.0019950001816530427
+      },
+      "A5": {
+        "n_streams": 20,
+        "accuracy": 0.9375,
+        "accuracy_ci": {
+          "mean": 0.9375,
+          "low": 0.9243055555555555,
+          "high": 0.951388888888889,
+          "n": 20
+        },
+        "score": 0.9375,
+        "accuracy_q_inj": 0.9916666666666666,
+        "accuracy_q_natural": 0.9325757575757576,
+        "session_accuracy": {
+          "1": 0.95,
+          "2": 0.9416666666666667,
+          "3": 0.9583333333333334,
+          "4": 0.95,
+          "5": 0.9416666666666667,
+          "6": 0.9416666666666667,
+          "7": 0.9333333333333333,
+          "8": 0.9583333333333334,
+          "9": 0.9,
+          "10": 0.9083333333333334,
+          "11": 0.9166666666666666,
+          "12": 0.95
+        },
+        "error_breakdown": {
+          "correct": 1350,
+          "stale": 12,
+          "sql_error": 0,
+          "wrong_result": 46,
+          "no_submission": 32
+        },
+        "stale_rate": 0.008333333333333333,
+        "stale_rate_drift_dependent": 0.016574585635359115,
+        "probe_accuracy": 1.0,
+        "probe_accuracy_injected": 1.0,
+        "false_note": null,
+        "cost_per_stream_usd": 0.023677063,
+        "cost_by_component_usd": {
+          "online": 0.021281313000000003,
+          "probe": 0.0023957500000000003
+        },
+        "cost_per_correct_usd": 0.0003507713037037037
+      }
+    },
+    "cost": {
+      "run_total_usd": 7.936572614999995,
+      "by_component_usd": {
+        "online": 3.481219649999996,
+        "consolidation": 3.8581745599999993,
+        "probe": 0.42000634499999984,
+        "embedding": 0.17717206000000002
+      }
+    }
+  }
+}
