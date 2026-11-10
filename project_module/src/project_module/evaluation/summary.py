@@ -62,7 +62,9 @@ def note_outcomes(
         probes = [p for p in data.probes if p.stream_id == stream_id and p.arm == arm]
         probe_sessions = sorted({p.session for p in probes})
         for note in streams[stream_id].injections:
-            since = [c for c in consolidations if c.session >= note.after_session]
+            # A note injected after its session's consolidation is first seen by the next one.
+            first = note.after_session + (data.false_note_timing == "after_consolidation")
+            since = [c for c in consolidations if c.session >= first]
             next_probe = next((s for s in probe_sessions if s >= note.after_session), None)
             corrected = next_probe is not None and _is_corrected(
                 note.marker,

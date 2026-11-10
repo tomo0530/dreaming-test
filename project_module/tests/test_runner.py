@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import logging
@@ -15,7 +16,7 @@ from project_module.contracts import ChatResult, CostTag, QuestionResult, ToolCh
 from project_module.layout import RunLayout
 from project_module.llm.ledger import CostLedger
 from project_module.llm.metered import MeteredClient
-from project_module.manifest import load_manifest
+from project_module.manifest import config_sha256, load_manifest
 from project_module.memory.store import MemoryStore, false_notes_present
 from project_module.runner import (
     InvalidStreamError,
@@ -493,3 +494,14 @@ def test_interrupt_stops_jobs_records_interrupted_and_releases_the_lock(
     assert len(client.tags) == 1 and client.tags[0].stream_id == "c-01"
     with run_lock(run_dir):
         pass
+
+
+def test_config_digest_of_the_default_timing_matches_manifests_written_before_the_field() -> None:
+    config = _config(inject_false_notes=True)
+    legacy_digest = hashlib.sha256(
+        config.model_dump_json(exclude={"false_note_timing"}).encode("utf-8")
+    ).hexdigest()
+
+    assert config_sha256(config) == legacy_digest
+    after = config.model_copy(update={"false_note_timing": "after_consolidation"})
+    assert config_sha256(after) != legacy_digest

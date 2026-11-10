@@ -5,7 +5,7 @@ import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import closing
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ValidationError
 
@@ -47,6 +47,10 @@ class RunData(BaseModel):
     consolidations: list[ConsolidationRecord]
     status: dict[str, RunStatus]
     costs: list[dict[str, Any]]
+    # When the run injected its false notes (`ExperimentConfig.false_note_timing`).
+    false_note_timing: Literal["before_consolidation", "after_consolidation"] = (
+        "before_consolidation"
+    )
 
 
 class JobStatus(BaseModel):
@@ -124,6 +128,7 @@ def load_run(run_dir: Path, ledger: Path) -> RunData:
         consolidations=list(consolidations.values()),
         status=status,
         costs=_read_costs(ledger, run_id=run_dir.name),
+        false_note_timing=config.false_note_timing,
     )
     logger.info(
         "Loaded run %s: %d jobs, %d results, %d probes, %d consolidations, %d cost rows",

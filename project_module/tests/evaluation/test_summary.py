@@ -392,3 +392,12 @@ def test_mechanical_summary_has_no_injected_rate_without_consolidations():
     assert summary["consolidation"]["injected_updated_rate"] is None
     assert summary["by_arm"]["A0"]["injected_updated_rate"] is None
     assert summary["by_arm"]["A0"]["consolidation_stopped"] == {}
+
+
+def test_note_outcomes_skip_the_injection_session_when_notes_follow_the_consolidation():
+    data = make_injection_run().model_copy(update={"false_note_timing": "after_consolidation"})
+
+    outcomes = note_outcomes(data, "A1", {"i1": make_injection_stream("i1")}, ["i1"])
+
+    # The consolidation of the injection session ran before the note existed.
+    assert [len(o.present_after) for o in outcomes] == [8, 4]

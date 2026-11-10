@@ -29,8 +29,13 @@ class RunManifest(BaseModel):
 
 
 def config_sha256(config: ExperimentConfig) -> str:
-    """Digest of the validated configuration, independent of YAML layout and comments."""
-    return hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
+    """Digest of the validated configuration, independent of YAML layout and comments.
+
+    `false_note_timing` joins the digest only when it differs from its default, so the runs
+    recorded before the field existed keep their digest and can still be resumed.
+    """
+    exclude = {"false_note_timing"} if config.false_note_timing == "before_consolidation" else None
+    return hashlib.sha256(config.model_dump_json(exclude=exclude).encode("utf-8")).hexdigest()
 
 
 def file_sha256(path: Path) -> str:
