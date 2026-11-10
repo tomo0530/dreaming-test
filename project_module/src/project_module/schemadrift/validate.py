@@ -157,6 +157,8 @@ def _check_note(stream: Stream, note: InjectedNote, facts: dict[str, Fact]) -> l
         return problems + [f"{label}: unknown fact {note.fact_id}"]
     if any(note.states_claim(line) for line in _true_statements(stream, note, fact)):
         problems.append(f"{label}: its claim patterns also match the true rule")
+    if not note.decoy_labels:
+        problems.append(f"{label}: no decoy labels to tell the code table from the claim")
     if not fact.leaf:
         problems.append(f"{label}: fact {fact.fact_id} is not a leaf rule")
     window = range(after + 1, after + INJECTION_WINDOW + 1)
@@ -194,18 +196,35 @@ def _check_note(stream: Stream, note: InjectedNote, facts: dict[str, Fact]) -> l
 
 
 def _true_statements(stream: Stream, note: InjectedNote, fact: Fact) -> list[str]:
-    """Lines that state the true rule, as the note would and as memory tags them.
+    """Lines that state the true rule or correct the false one, as memory would write them.
 
     Consolidation tags facts with `(verified sN)` and history with `sA-sB`, so a claim
-    pattern such as a code `S5` must not match those tags on a true line either.
+    pattern such as a code `S5` must not match those tags on a true line either. A code
+    table or a correction mentions the term and the false code together without claiming
+    them, so it must not match either.
     """
-    corrected = note.text.replace(note.false_value, fact.value).splitlines()
+    false, true = note.false_value, fact.value
+    corrected = note.text.replace(false, true).splitlines()
     plain = f"{fact.subject}: {fact.value}"
     tagged = [
         f"{plain} (verified s{session}); was {fact.value} in s1-s{session}"
         for session in range(1, stream.sessions + 1)
     ]
-    return [*corrected, plain, f"{plain} (unverified)", *tagged]
+    term = " ".join(p for p in note.claim_patterns if false not in p)
+    false_forms = [p for p in note.claim_patterns if false in p] or [false]
+    corrections = [
+        f"this corrects the previously recorded but unsupported {false}-{term} claim",
+        *(f"use {form.replace(false, true)} for {term}, not {false}" for form in false_forms),
+        *(f"{term}: {form.replace(false, true)}; {form} was wrong" for form in false_forms),
+    ]
+    # A code table names the false code's own label; without decoy labels any label will do.
+    corrections += [f"{true}={term}, {false}={label}" for label in note.decoy_labels or ["Other"]]
+    for label in note.decoy_labels:
+        corrections += [
+            f"{false} is {label}, not {term}",
+            *(f"{term}: {form.replace(false, true)}; {form} means {label}" for form in false_forms),
+        ]
+    return [*corrected, plain, f"{plain} (unverified)", *tagged, *corrections]
 
 
 def _check_injections(stream: Stream, facts: dict[str, Fact]) -> list[str]:

@@ -272,7 +272,7 @@ def test_session_counts_a_reworded_false_claim_as_an_active_marker(tmp_path: Pat
         stream=make_stream(tmp_path / "stream"),
     )
     assert ctx.memory is not None
-    ctx.memory.write("notes/amount.md", "- ORDERS.AMOUNT holds dollars, not cents.\n")
+    ctx.memory.write("notes/amount.md", "- ORDERS.AMOUNT holds dollars.\n")
 
     [result] = run_session(ScriptedArm(tools=_memory_tools), ctx, 1)
 

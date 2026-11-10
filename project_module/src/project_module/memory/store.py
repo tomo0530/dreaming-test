@@ -209,8 +209,9 @@ class MemoryStore:
 def false_notes_present(store: MemoryStore, notes: Sequence[InjectedNote]) -> list[str]:
     """Markers of the `notes` that are still in `store`, in the given order.
 
-    A note is present when a line of any file contains its marker, or contains every one of
-    its `claim_patterns`, so a reworded copy of the false claim counts too.
+    A note is present when a line of any file contains its marker or states its false claim
+    (`InjectedNote.present_in`), so a reworded copy counts too, while a code table or a
+    correction that merely mentions the term and the false code does not.
     """
     found: set[str] = set()
     for _, _, line in store.lines():

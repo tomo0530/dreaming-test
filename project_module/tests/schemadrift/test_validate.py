@@ -150,6 +150,22 @@ def test_validate_refuses_a_code_pattern_that_session_tags_would_match(tmp_path:
     assert _has(problems, "after session 3", "claim patterns also match the true rule")
 
 
+def test_validate_refuses_claim_patterns_that_match_a_code_table_or_correction(
+    tmp_path: Path,
+) -> None:
+    stream = _generate(tmp_path)
+    first, second = stream.injections
+    # The bare term and code also sit together on a code table line (`B8=business, C9=...`).
+    changed = first.model_copy(
+        update={"claim_patterns": [first.claim_patterns[0], first.false_value], "decoy_labels": []}
+    )
+
+    problems = validate_stream(stream.model_copy(update={"injections": [changed, second]}))
+
+    assert _has(problems, "after session 3", "claim patterns also match the true rule")
+    assert _has(problems, "after session 3", "no decoy labels")
+
+
 def test_validate_detects_long_false_note(tmp_path: Path) -> None:
     stream = _generate(tmp_path)
     first, second = stream.injections
