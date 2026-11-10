@@ -67,3 +67,26 @@
 - PR #3（結果と報告）をマージした。
 - Notion「新規技術検証」DB にレポートを投稿した（図 2 枚を添付。Status は Done、FY は FY27H1、MGR checked は未チェック）。FY について、過去 2 件（2026-05・2026-07 完了）は FY26H2 だった。2026-11 の完了は下期をまたぐため、FY27H1 とした。
 - `10_implementation-plan.md` のチェックリストを、実施結果に合わせて更新した。
+
+### 補足: dev の実測 token（E1。費用台帳の dev run `dev-20261110T134000Z`、精算済みの呼び出し）
+- オンライン: 1 問あたり平均で入力 約 8,350 token、出力 約 280 token（72 セッション × 6 問）。
+- consolidation: 1 回（1 セッション後の処理全体）あたり平均で入力 約 166,600 token、出力 約 9,070 token（44 回。A1・A4 の 2 フェーズの合計）。
+- 呼び出し 1 回あたりの平均入力: consolidation 約 12,900 token、online 約 1,630 token、probe 約 1,630 token。
+
+## 完了確認（10_implementation-plan.md の各項目と根拠）
+
+| 計画の項目 | 状態 | 根拠 |
+|---|---|---|
+| Task 0（テンプレート整備、依存追加、契約、検証、commit） | 完了 | commit `213d1c1`。`uv.lock`。`tests/test_contracts.py` |
+| Task 1〜6（計量クライアント・台帳・loop、SchemaDrift-SQL、記憶ストア、検索、統計・図、CL-Bench） | 完了 | commit `dd743d8`。`tests/llm`、`tests/schemadrift`、`tests/memory`、`test_transcript.py`、`test_retrieval.py`、`tests/evaluation`、`test_clbench.py` |
+| Task 7〜8（セッション・群・probe、consolidation・記憶群） | 完了 | commit `94957cc`。`tests/agent`、`test_consolidation.py` |
+| Task 9（ランナー・CLI・設定・E2E、統合検証） | 完了 | commit `4085f0a`。`test_runner.py`、`test_e2e_fake.py`。`make test` は現時点で 717 件すべて成功、`make all-lint` もクリーン |
+| Review R1（並行レビュー、一括修正、PR・マージ） | 完了 | 本台帳 2026-11-10「R1 レビュー」。commit `8360c73`・`e72efc1`。PR #2 は 2026-11-10T13:48Z にマージ |
+| E1（ストリーム生成と SHA の記録、integrate テスト、dev の調整と実測） | 完了 | 本台帳 2026-11-10 の E1 と、上の「dev の実測 token」。commit `b5bae39` |
+| E2（pilot・pilot_inj の実行と gate） | 完了 | 本台帳 2026-11-11 の E2。`artifacts/pilot-gate-original.json` |
+| E2（gate が偽のときの改訂、`pilot_rev`・`pilot_inj_rev` の実行） | **未実施（逸脱）** | 協議（Codex sol / Opus / astra / fable、Gemini の裁定）の結果、改訂は行わず、機構確認 (5)(6) を探索的指標に格下げして main へ進んだ。凍結前に決めて記録した（本台帳 E2 の 3、事前登録 §0）。main の実行後に改訂版の pilot を回しても、開始条件の判定には使えない。このため事後には実施しない |
+| E2（規模の確定、main のストリーム生成、事前登録の凍結） | 完了 | commit `0ad62f3`。事前登録 §4 |
+| E3（main の実行） | 完了 | run `main-20261110T161346Z`。120 ジョブすべて完走 |
+| E4（CL-Bench の取得と実行） | 完了 | run `clbench-20261110T141842Z`。9 ジョブすべて完走 |
+| E5（解析、40_results.md、Notion 原稿） | 完了 | `outputs/analysis/{main,clbench}/metrics.json`。`40_results.md`。commit `31e3771` |
+| Review R2（並行レビュー、修正、PR・マージ、Notion への投稿） | 完了 | 本台帳 E5 の R2 の項（Opus は再確認で APPROVE、Codex の残件も反映）。PR #3 は 2026-11-10T20:00Z にマージ。Notion のページを投稿し、Status を Done にした |

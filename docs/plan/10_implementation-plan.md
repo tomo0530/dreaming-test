@@ -10,7 +10,7 @@
 
 **Spec:** [00_design.md](00_design.md)（設計の正本）、[20_preregistration.md](20_preregistration.md)（凍結する判定条件）
 
-**実行状況:** 2026-11-11 時点で全タスクを完了した（E2 の改訂手順のみ逸脱。下記 E2 の注記を参照）。結果は [40_results.md](40_results.md)、実行の記録は [30_run-ledger.md](30_run-ledger.md) にある。
+**実行状況:** 2026-11-11 時点で、E2 の改訂手順を除く全タスクを完了した。E2 の改訂手順は意図的に実施せず、逸脱として記録した（下記 E2 の注記を参照）。各項目の根拠は `30_run-ledger.md` の「完了確認」にある。結果は [40_results.md](40_results.md)、実行の記録は [30_run-ledger.md](30_run-ledger.md) にある。
 
 ## Global Constraints
 
@@ -506,7 +506,7 @@ def test_e2e_fake_all_arms_two_sessions(tmp_path): ...                        # 
 ### E2: pilot と gate
 
 - [x] `pilot.yaml` と `pilot_inj.yaml` を並行実行し（台帳はプロセス間で共有される）、全ジョブが `completed` であることを確認してから `analyze.py --gate` で `gate.json` を作る（`failed` があれば `--resume` で完走させる）。
-- [x] `passed` が真なら E3 へ。偽なら、改訂を 1 回だけ行う。改訂で変えてよいのは生成器とプロンプトだけで、閾値は変えない。機構確認 (a)(b) の不成立に対しては注入の配置と反証の有無だけを直し、A4 のプロンプトは変えない。改訂後の生成器で `pilot_rev.yaml` と `pilot_inj_rev.yaml` のストリームを生成し直し、両方を実行して gate を再評価する（作り直したストリームの `stream.json` の SHA-256 を run ledger に記録し直す）。それでも偽なら E5 に進み、「条件の構築まで」としてレポートを書く。
+- [ ] **未実施（逸脱）** `passed` が真なら E3 へ。偽なら、改訂を 1 回だけ行う。改訂で変えてよいのは生成器とプロンプトだけで、閾値は変えない。機構確認 (a)(b) の不成立に対しては注入の配置と反証の有無だけを直し、A4 のプロンプトは変えない。改訂後の生成器で `pilot_rev.yaml` と `pilot_inj_rev.yaml` のストリームを生成し直し、両方を実行して gate を再評価する（作り直したストリームの `stream.json` の SHA-256 を run ledger に記録し直す）。それでも偽なら E5 に進み、「条件の構築まで」としてレポートを書く。
   - **実施結果（逸脱）**: 旧ゲートは偽（(6b-A1) 未達）。協議（Codex sol / Opus / astra / fable、Gemini 裁定）の結果、改訂と `pilot_rev`・`pilot_inj_rev` の実行は行わず、機構確認 (5)(6) を探索的指標に格下げして main へ進んだ。これは本手順からの逸脱であり、`30_run-ledger.md`（2026-11-11 E2）と `20_preregistration.md` §0、`40_results.md` §8 に記録した。
 - [x] `scale = (N, q)` に従って `main.yaml` の `stream_ids`・`seeds`・`questions_per_session` を確定し、main のストリームを生成・検証する。`20_preregistration.md` §4 を埋めて commit する（凍結）。
 
