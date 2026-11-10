@@ -45,6 +45,7 @@ from project_module.manifest import (
     file_sha256,
     git_state,
     load_manifest,
+    matches_config,
     write_manifest,
 )
 from project_module.memory.store import MemoryStore
@@ -630,7 +631,7 @@ def _start_run(config: ExperimentConfig, out_root: Path, inputs: dict[str, str])
 
 def _check_resumable(run_dir: Path, config: ExperimentConfig, inputs: dict[str, str]) -> None:
     manifest = load_manifest(run_dir)
-    if manifest.config_sha256 != config_sha256(config):
+    if not matches_config(manifest.config_sha256, config):
         raise ValueError(f"{run_dir} was started with a different configuration")
     if manifest.input_sha256 != inputs:
         raise ValueError(f"the stream files of {run_dir} have changed since it started")

@@ -62,6 +62,16 @@ def git_state() -> tuple[str | None, bool | None]:
     return head.stdout.strip(), bool(status.stdout.strip())
 
 
+def matches_config(digest: str, config: ExperimentConfig) -> bool:
+    """Whether a manifest's `config_sha256` was computed from `config`.
+
+    Besides the current digest, this accepts the full-dump digest that commit `d71c2f4`
+    recorded while it also hashed `false_note_timing` at its default.
+    """
+    full_dump = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
+    return digest in {config_sha256(config), full_dump}
+
+
 def write_manifest(layout: RunLayout, manifest: RunManifest) -> None:
     path = layout.manifest_file()
     path.parent.mkdir(parents=True, exist_ok=True)

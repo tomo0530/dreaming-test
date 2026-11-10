@@ -65,9 +65,10 @@ class ExperimentConfig(_Frozen):
     inject_false_notes: bool
     # When the false notes due after a session are injected. `before_consolidation` (the
     # preregistered design) writes them where the agent's own memory goes and lets that
-    # session's consolidation see them. `after_consolidation` (the E2 revision, 00_design 9:
-    # placement only) writes them after the consolidation and also appends them to
-    # `injected.md`, so the next session starts with the note in its injected layer.
+    # session's consolidation see them. `after_consolidation` (the post-hoc E2 revision; it
+    # changes the injection timing and target beyond the generator-only scope of 00_design 9)
+    # writes them after the consolidation and also puts them in `injected.md`, so the next
+    # session starts with the note in its injected layer.
     false_note_timing: Literal["before_consolidation", "after_consolidation"] = (
         "before_consolidation"
     )

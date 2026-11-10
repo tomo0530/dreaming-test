@@ -511,3 +511,20 @@ def test_config_digest_of_the_default_timing_matches_manifests_written_before_th
     assert config_sha256(config) == legacy_digest
     after = config.model_copy(update={"false_note_timing": "after_consolidation"})
     assert config_sha256(after) != legacy_digest
+
+
+def test_resume_accepts_the_full_dump_digest_recorded_by_earlier_code(tmp_path: Path) -> None:
+    config = _small_config("legacy", ["l-01"], [20])
+    generate_streams(config, tmp_path / "streams")
+    kwargs: dict[str, Any] = {
+        "out_root": tmp_path / "outputs",
+        "streams_root": tmp_path / "streams",
+        "clbench_root": tmp_path / "none",
+    }
+    run_dir = run_experiment(config, client=RunnerLLM(), **kwargs)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["config_sha256"] = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    assert run_experiment(config, client=RunnerLLM(), resume=run_dir, **kwargs) == run_dir
