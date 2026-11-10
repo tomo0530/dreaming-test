@@ -10,7 +10,7 @@
 
 **Spec:** [00_design.md](00_design.md)（設計の正本）、[20_preregistration.md](20_preregistration.md)（凍結する判定条件）
 
-**実行状況:** 2026-11-11 時点で、全項目を実施した。ただし E2 の改訂手順は、本実験の後に事後で実施した。手順の順序と最後の分岐（「条件の構築まで」で閉じる）には従っておらず、逸脱として扱う（下記 E2 の注記を参照）。各項目の根拠は `30_run-ledger.md` の「完了確認」にある。結果は [40_results.md](40_results.md)、実行の記録は [30_run-ledger.md](30_run-ledger.md) にある。
+**実行状況:** 2026-11-11 時点で、全項目を実施した。E2 の改訂手順は本実験の後に事後で実施しており、順序は逸脱である。改訂後も gate が不合格だったため、最後の分岐に従い「条件の構築まで」のレポートを `40_results.md` §0 に作成した。本実験の結果は、逸脱のもとでの参考結果として同じ文書に残している（下記 E2 の注記を参照）。各項目の根拠は `30_run-ledger.md` の「完了確認」にある。結果は [40_results.md](40_results.md)、実行の記録は [30_run-ledger.md](30_run-ledger.md) にある。
 
 ## Global Constraints
 
@@ -506,7 +506,7 @@ def test_e2e_fake_all_arms_two_sessions(tmp_path): ...                        # 
 ### E2: pilot と gate
 
 - [x] `pilot.yaml` と `pilot_inj.yaml` を並行実行し（台帳はプロセス間で共有される）、全ジョブが `completed` であることを確認してから `analyze.py --gate` で `gate.json` を作る（`failed` があれば `--resume` で完走させる）。
-- [x] **（事後に実施。順序と最後の分岐は逸脱）** `passed` が真なら E3 へ。偽なら、改訂を 1 回だけ行う。改訂で変えてよいのは生成器とプロンプトだけで、閾値は変えない。機構確認 (a)(b) の不成立に対しては注入の配置と反証の有無だけを直し、A4 のプロンプトは変えない。改訂後の生成器で `pilot_rev.yaml` と `pilot_inj_rev.yaml` のストリームを生成し直し、両方を実行して gate を再評価する（作り直したストリームの `stream.json` の SHA-256 を run ledger に記録し直す）。それでも偽なら E5 に進み、「条件の構築まで」としてレポートを書く。
+- [x] **（改訂は本実験の後に事後で実施＝順序の逸脱。改訂後も偽だったため、最後の分岐「条件の構築まで」のレポートを `40_results.md` §0 に作成済み）** `passed` が真なら E3 へ。偽なら、改訂を 1 回だけ行う。改訂で変えてよいのは生成器とプロンプトだけで、閾値は変えない。機構確認 (a)(b) の不成立に対しては注入の配置と反証の有無だけを直し、A4 のプロンプトは変えない。改訂後の生成器で `pilot_rev.yaml` と `pilot_inj_rev.yaml` のストリームを生成し直し、両方を実行して gate を再評価する（作り直したストリームの `stream.json` の SHA-256 を run ledger に記録し直す）。それでも偽なら E5 に進み、「条件の構築まで」としてレポートを書く。
   - **実施結果**: 旧ゲートは偽だった。協議の結果、本実験の前には改訂を行わず、逸脱として main に進んだ（`30_run-ledger.md` 2026-11-11 E2、`20_preregistration.md` §0）。改訂手順は、本実験の後に事後で 1 回実施した。注入の配置を変えて `pilot_rev`・`pilot_inj_rev` を実行したが、改訂後の gate も偽だった（`artifacts/pilot-gate-revision.json`）。規則上は「条件の構築まで」で閉じる結果であることを、`40_results.md` §8 の 6 に明記した。
 - [x] `scale = (N, q)` に従って `main.yaml` の `stream_ids`・`seeds`・`questions_per_session` を確定し、main のストリームを生成・検証する。`20_preregistration.md` §4 を埋めて commit する（凍結）。
 
