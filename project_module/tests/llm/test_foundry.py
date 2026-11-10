@@ -300,3 +300,39 @@ def test_foundry_luna_roundtrip() -> None:
 
     assert result.usage.input_tokens > 0
     assert 0 < ledger.spent_usd(phase="test") - spent_before < 0.01
+
+
+@pytest.mark.integrate
+@pytest.mark.skipif(
+    not (os.environ.get("AZURE_OPENAI_ENDPOINT") and os.environ.get("AZURE_OPENAI_API_KEY")),
+    reason="needs Azure credentials (run with uv run --env-file .env)",
+)
+def test_foundry_luna_forced_tool_choice() -> None:
+    models = load_models(REPO_ROOT / "configs" / "models.yaml")
+    ledger = CostLedger(
+        ledger_path(REPO_ROOT / "outputs"), phase="test", phase_cap_usd=1.0, hard_cap_usd=200.0
+    )
+    client = MeteredClient(FoundryTransport.from_env(), ledger, models)
+    result = client.chat(
+        model="gpt-6-luna",
+        messages=[{"role": "user", "content": "Submit the answer 42."}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "submit",
+                    "description": "Submit the final answer.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"answer": {"type": "string"}},
+                        "required": ["answer"],
+                    },
+                },
+            }
+        ],
+        reasoning_effort="low",
+        max_completion_tokens=256,
+        tool_choice={"type": "function", "name": "submit"},
+        tag=make_tag(phase="test", component="test"),
+    )
+    assert result.tool_calls[0].name == "submit"

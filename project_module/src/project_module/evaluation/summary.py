@@ -36,8 +36,9 @@ class NoteOutcome(BaseModel):
     """What happened to one injected false note in one arm of one stream.
 
     `present_after[i]` says whether the note (its marker or its reworded claim) was still in
-    memory after the i-th consolidation from the injection onward. `corrected` means that, when the next probe was taken, the marker
-    was gone from memory and the probe on the injected fact was answered correctly.
+    memory after the i-th consolidation from the injection onward. `corrected` means that, when
+    the next probe was taken, the note (its marker and its reworded claim) was gone from memory
+    and the probe on the injected fact was answered correctly.
     """
 
     stream_id: str
