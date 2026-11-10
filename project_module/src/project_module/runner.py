@@ -247,7 +247,8 @@ def run_stream_arm(
     """Run, or resume, the sessions of `arm_name` on the stream of `env`.
 
     Each session runs the questions, injects the false notes due after it (when the config
-    injects; before or after the consolidation per `false_note_timing`), lets the arm consolidate, asks the probes (SchemaDrift checkpoints only), then
+    injects; before or after the consolidation per `false_note_timing`), lets the arm
+    consolidate, asks the probes (SchemaDrift checkpoints only), then
     writes the session's rows, snapshots memory and index, and updates `status.json`. A
     completed job returns at once. `stop` is checked when the job starts, before every
     session and before every question; a stopped job records the stop's reason as its status

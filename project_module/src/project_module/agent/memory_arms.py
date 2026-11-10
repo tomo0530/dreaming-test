@@ -125,7 +125,7 @@ class RollingSummaryArm(_MemoryArm):
         _require_marker(note)
         _append_to(memory, SUMMARY_FILE, note.text)
         if expose:
-            _append_to(memory, INJECTED_FILE, note.text)
+            _prepend_to(memory, INJECTED_FILE, note.text)
         logger.info(
             "%s/%s: false note on %s appended to %s",
             ctx.stream_id,
@@ -151,7 +151,7 @@ class _WikiArm(_MemoryArm):
         path = f"{NOTES_PREFIX}{slug}.md"
         memory.write(path, note.text.strip() + "\n")
         if expose:
-            _append_to(memory, INJECTED_FILE, note.text)
+            _prepend_to(memory, INJECTED_FILE, note.text)
         logger.info(
             "%s/%s: false note on %s written to %s", ctx.stream_id, self.name, note.fact_id, path
         )
@@ -196,6 +196,14 @@ def _require_marker(note: InjectedNote) -> None:
     # Survival of a false note is measured by its marker, so a note without it is unusable.
     if note.marker not in note.text:
         raise ValueError(f"the false note on {note.fact_id} does not contain its marker")
+
+
+def _prepend_to(memory: MemoryStore, path: str, paragraph: str) -> None:
+    """Put `paragraph` first: the injected layer is truncated from the end."""
+    current = memory.read_all(path) if memory.exists(path) else ""
+    memory.write(
+        path, _append_paragraph(paragraph, current) if current.strip() else paragraph.strip() + "\n"
+    )
 
 
 def _append_to(memory: MemoryStore, path: str, paragraph: str) -> None:

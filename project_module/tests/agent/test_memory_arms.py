@@ -163,7 +163,7 @@ def test_injection_targets_per_arm(tmp_path: Path, arm: MemoryArm, target: str) 
     ],
     ids=["A1", "A3", "A4"],
 )
-def test_exposed_injection_also_appends_to_injected_md(
+def test_exposed_injection_also_puts_the_note_first_in_injected_md(
     tmp_path: Path, arm: MemoryArm, target: str
 ) -> None:
     ctx = _make_ctx(tmp_path)
@@ -173,7 +173,8 @@ def test_exposed_injection_also_appends_to_injected_md(
     arm.inject_false_note(ctx, FALSE_NOTE, expose=True)
 
     assert memory.read_all(target).endswith(FALSE_NOTE.text)
-    assert memory.read_all("injected.md") == f"# Memory\n- verified rule\n\n{FALSE_NOTE.text}"
+    # First, because the injected layer is truncated from the end.
+    assert memory.read_all("injected.md") == f"{FALSE_NOTE.text}\n# Memory\n- verified rule\n"
 
 
 def test_a1_appends_false_note_after_existing_summary(tmp_path: Path) -> None:

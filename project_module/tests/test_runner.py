@@ -235,15 +235,21 @@ def test_injection_after_consolidation_reaches_the_next_session_first(tmp_path: 
     memory = MemoryStore(layout.memory_dir(STREAM_ID, "A4"), writable=True)
     notes = [make_stream(tmp_path / "s").injections[0]]
     at_consolidation: dict[int, list[str]] = {}
+    online_prompts: dict[int, str] = {}
 
-    def observe(tag: CostTag, _: list[dict[str, Any]]) -> None:
+    def observe(tag: CostTag, messages: list[dict[str, Any]]) -> None:
         if tag.component == "consolidation":
             at_consolidation.setdefault(tag.session, false_notes_present(memory, notes))
+        if tag.component == "online":
+            online_prompts.setdefault(tag.session, str(messages[0]["content"]))
 
     client = RunnerLLM(observe=observe)
     assert _run_job(config, _env(), "A4", layout, client, stream_root=tmp_path / "s") == "completed"
 
     assert at_consolidation == {1: [], 2: [], 3: []}
+    assert MARKER not in online_prompts[3]
+    assert MARKER in online_prompts[4]
+    assert any(path.startswith("notes/") for path in memory.glob("**/*"))
     snapshot = MemoryStore(layout.snapshot_dir(STREAM_ID, "A4", 3) / "memory", writable=False)
     assert MARKER in snapshot.read_all("injected.md")
 
