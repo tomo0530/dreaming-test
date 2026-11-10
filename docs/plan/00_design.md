@@ -31,7 +31,7 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 | D4 | データ | 主: 自作 SchemaDrift-SQL。副: CL-Bench database task（社内研究目的に限る） | ユーザー |
 | D5 | 誤メモ注入 | 1 ストリーム 2 件、他の問題と独立した leaf rule に限定。全問で主指標、注入影響問題と非影響問題で層別報告 | Gemini 裁定 |
 | D6 | 規模 | 12 セッションを固定し、1 セッション 6 問（単価が高い場合のみ 5 問）。ストリーム数は pilot 実測単価で決定（§8.2） | Gemini 裁定 |
-| D7 | Pilot gate | 必須 6 条件・助言 4 条件（§9）。A4 の成績は必須条件に使わない | Gemini 裁定＋レビュー反映 |
+| D7 | Pilot gate | 必須 7 条件・助言 4 条件（§9）。A4 の成績は必須条件に使わない | Gemini 裁定＋レビュー反映 |
 | D8 | モデル | 全役割 `gpt-6-luna`。`reasoning_effort` は agent=low、consolidator（A1/A3/A4 共通）=medium。judge なし | 協議一致＋Gemini 裁定 |
 | D9 | 埋め込み | `text-embedding-3-large`（デプロイ済み）。A2 は SQLite FTS5 BM25 と RRF で併用 | ユーザー |
 | D10 | 感度分析 | `gpt-6.1-sol` による感度分析は行わない（cookbook 型 loop では $15 枠で 1 ストリームしか回らない） | ユーザー |
@@ -49,13 +49,13 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 | 群 | 記憶の作り方（オフライン） | 回答時に使える記憶（オンライン） | 誤メモ注入 |
 |---|---|---|---|
 | A0 Stateless | なし | なし | なし |
-| A1 Rolling Summary（主対照） | consolidator が前回の `summary.md` と全 transcript（file tool で閲覧可）から `summary.md` と `injected.md` を書き直す | `injected.md` を注入、`memory_read` / `memory_search`（読み取りのみ） | `summary.md` に追記 |
+| A1 Rolling Summary（主対照） | 2 フェーズ。review（transcript で `summary.md` を検証・訂正・追記）→ rewrite（`summary.md` を圧縮し `injected.md` を書き直す） | `injected.md` を注入、`memory_read` / `memory_search`（読み取りのみ） | `summary.md` に追記 |
 | A2 Raw-RAG | なし（transcript を索引に追加するだけ） | `search_transcripts`（埋め込み＋BM25、RRF） | なし |
 | A3 Organize-only Dreaming | organizer のみ。agent が書いた notes を整理・統合するが transcript は読めない | `injected.md` を注入、`memory_read` / `memory_search`、`memory_write` | `notes/` に追記 |
 | A4 Verified Dreaming（処置群） | analyzer（transcript で verify → enrich → organize）→ organizer | A3 と同じ | `notes/` に追記 |
 | A5 Oracle（診断） | gold fact ledger から現時点で有効な規則を機械生成（`fact_id` 順。注入層に入りきらない分は `facts.md`） | `injected.md` を注入、`memory_read` / `memory_search` | なし |
 
-- A1 と A4 のオフライン処理は、同じ tool loop・同じ合計ターン数（22 = analyzer 10 ＋ organizer 12）・同じ累計入力上限（`budgets.consolidation.max_input_tokens_per_run`）・同じ `reasoning_effort` で動かし、実消費を併記する。transcript を読めるターン数は A1（22）≥ A4（10）で、A1 に不利にしていない。両者のプロンプトには共通の規則断片（transcript と tool 結果の照合、正確な識別子・単位・失敗した SQL の記録など）を入れ、A1 の要約プロンプトだけが手薄にならないようにする。
+- A1 と A4 のオフライン処理は、同じ 2 フェーズ構成（transcript を読める 10 ターン＋読めない 12 ターン、別々の会話）・同じ累計入力上限（`budgets.consolidation.max_input_tokens_per_run`）・同じ出力上限・同じ `reasoning_effort` で動かし、実消費を併記する（R1 レビューで、1 本の会話に 22 ターンを詰めると A1 だけが先に入力上限に当たる点が指摘されたため、実装前の段階で A4 と同じ形にそろえた）。両者のプロンプトには共通の規則断片（transcript と tool 結果の照合、正確な識別子・単位・失敗した SQL の記録など）を入れ、A1 の要約プロンプトだけが手薄にならないようにする。
 - 主比較 A4 − A1 は「オンラインで notes を書き、オフラインで transcript により裏付けて統合する記憶システム」と「オフラインで transcript から 1 本の要約を書き直す記憶システム」の比較であり、オンラインで notes を書ける（`memory_write`、`notes/` 配下のみ）のは A3 / A4 だけである。したがって Δ にはセッション内のメモ書きの効果も含まれる。この主張範囲を事前登録に書く。
 - A3 と A4 の差は transcript へのアクセスを含む検証工程の有無。この比較は「検証プロンプトだけの効果」ではなく「原ログへのアクセスを含む検証工程の効果」と記述する。
 - 注入層は全群でコードにより `budgets.injected_tokens` に切り詰める。追加の読み出し（記憶ツール・A2 の検索）も 1 問あたり累計 `budgets.online.memory_read_tokens` までとする。
@@ -75,7 +75,7 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 | ドリフト依存問題 | migration 直後のエポック（セッション 5〜8、9〜12）の問題の過半は、変更された要素に依存する（旧規則で書くと誤答になる） |
 | 統合問題 | 各セッション 1 問以上、2 つ以上の潜在規則（単位＋ステータス意味など）を同時に使う問題 |
 | gold fact ledger | 潜在規則を原子的事実として JSON 化（`fact_id`, `kind`, `subject`, `value`, `valid_from_session`, `valid_until_session`）。A5、memory probe、誤メモ注入の基礎。agent・consolidator からは隔離する |
-| 誤メモ注入 | 2 件。セッション 3 と 7 の終了直後（その回のオフライン処理の前）に、他の問題と独立した **leaf rule**（単一テーブルのステータスコードやフィルタ条件）の値を偽った 1 件（150 tokens 以下、残存判定用の固有の一文 `marker` を含む）を、群ごとの記憶（§4）に agent の文体で追記する。注入対象の fact は次の migration で変わらないものに限り、Q_inj はドリフト依存問題にしない。注入対象の leaf rule を参照する問題（Q_inj）はセッション 4〜6、8〜10 に配置し、注入直前のセッションにも当該 leaf rule を照会する問題を 1 問置く（transcript に反証が残りやすくする） |
+| 誤メモ注入 | 2 件。セッション 3 と 7 の終了直後（その回のオフライン処理の前）に、他の問題と独立した **leaf rule**（単一テーブルのステータスコードやフィルタ条件）の値を偽った 1 件（150 tokens 以下、平叙文のみ。残存判定用の固有の一文 `marker` と、偽の主張を検出する文字列の組 `claim_patterns` を持つ）を、群ごとの記憶（§4）に agent の文体で追記する。注入対象の fact は次の migration で変わらないものに限り、Q_inj はドリフト依存問題にしない。注入対象の leaf rule を参照する問題（Q_inj）はセッション 4〜6、8〜10 に配置し、注入直前のセッションにも当該 leaf rule を照会する問題を 1 問置く（transcript に反証が残りやすくする） |
 | memory probe | セッション 4・8・12 の処理の最後（セッション 4・8 はオフライン処理の後）に、有効な fact から 8 問の短答問題を決定的に抽出し（注入対象 fact が有効なら必ず含める）、DB にアクセスさせず記憶だけで答えさせる（A1〜A5）。probe は transcript を書かず、記憶への書き込みもさせない。正規化一致で機械採点 |
 
 ### 5.2 採点
@@ -100,7 +100,7 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 - 対象は `pgasawa/continual-learning-bench`（Apache-2.0、commit `5f8c50eb` に固定）の `database_exploration` タスク、`schema_drift` 設定（40 問。前半 20 問の後に DB が drift 版へ切り替わる）。DB は Amazon-Reviews-2023 由来で、配布元（Hugging Face）にライセンス表記がない。Git 管理外（`data/external/`）に実行時取得し、社内研究目的に限って使うことをレポートに明記する。
 - 公式の依存（litellm、`openai==2.16.0` の厳密ピン）と衝突するため import せず、タスク仕様（許可する SQL、50 行上限、10 秒タイムアウト、1 問 15 クエリ、回答値の提出、型別の正誤判定、reward = 正解 × (1 − クエリ数 / 15)、誤答時に正解値を返すフィードバック、drift 時の通知文）を薄いアダプタで再現する。
 - 40 問を 5 問 × 8 セッションに分け、Dreaming などのオフライン処理はセッション間に行う（drift はセッション 4 と 5 の間）。A0 / A1 / A4 × 3 反復（run_index 0〜2）で実行し、公式 score（reward の平均）と正答率の両方を報告する。
-- 位置づけは「記事の報告と改善の向きが一致するか」の確認であり、数値の再現ではない。問題の並べ替えは公式実装と一致する保証がないことも記載する。
+- 位置づけは「記事の報告と改善の向きが一致するか」の確認であり、数値の再現ではない。問題の並べ替えは公式実装の式を再現しており、固定 SHA の実データで run 0〜4 の順序が公式と一致することを確認済み。
 - タスクの違い（SQL の提出か回答値の提出か、採点、フィードバック）は `TaskEnv` に閉じ込め、agent・記憶・consolidation は本ハーネスの群実装をそのまま使う。
 
 ## 7. モデルと実行設定
@@ -112,7 +112,10 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 | 埋め込み（A2） | `text-embedding-3-large` | — |
 | judge | なし | 主指標・probe・誤答分類はすべてコードで採点 |
 
-- `temperature` は送らない（`gpt-6-luna` は既定値 1 のみ受け付ける）。出力上限は `max_completion_tokens`（推論トークンを含む）で指定する。
+- `temperature` は送らない（`gpt-6-luna` は既定値 1 のみ受け付ける）。出力上限は `max_completion_tokens`（推論トークンを含む。agent 2,048、consolidator 8,192）で指定する。
+- `gpt-6-luna` は Chat Completions で function tools と `reasoning_effort` の併用を受け付けないため、Responses API（`store=False`、推論内容はターン間で持ち越さない）で呼ぶ。
+- オンラインの問題と probe では、最終ターンに提出ツールの呼び出しを強制する（全群共通）。
+- Azure のコンテンツフィルタで拒否された呼び出しは課金されず、1 回だけ再試行する。それでも拒否されたら、その tool loop を `content_filter` で止める（問題なら未提出、オフライン処理ならそのフェーズを終了）。全群に同じ規則を適用し、件数を群別に報告する。
 - 応答の非決定性は seed では揃えられないため、再現性はストリーム数と全 transcript・記憶スナップショットの保存で担保する。
 - 接続: `.env` の `AZURE_OPENAI_ENDPOINT`（Foundry プロジェクト URL）からホスト部分を取り出し、`<host>/openai/v1/` を OpenAI SDK の `base_url` にする。秘密は `uv run --env-file .env` で環境変数として渡し、ログ・成果物に出さない。
 - 単価（USD / 1M tokens、Global Standard、short context）: luna 入力 0.10 / キャッシュ 0.01 / 出力 0.50、embedding-3-large 0.13。正本は `configs/models.yaml`。long context 単価の閾値は非公開のため、1 呼び出しの入力を `budgets.max_input_tokens_per_call` 以下に抑える。
@@ -154,8 +157,8 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 
 | 区分 | 条件 |
 |---|---|
-| 必須 | (1) 生成器の健全性（`validate_stream` が問題を返さない）。(2) acc(A5) − acc(A0) ≥ +5pt。(3) A1 に `stale` 誤答が 1 件以上ある。(4) §8.2 の規則で main の規模 (N, 問題数) が決まる。(5) 機構確認 (a): `pilot-inj-01` の A1 で、各注入の直前セッションにある「注入対象 fact を使う問題」が、エラーのない `query` を 1 回以上実行して正答している（反証となる正しい照会結果が transcript に残っている）。(6) 機構確認 (b): `pilot-inj-01` の A1 と A3 で、偽メモが記憶に残っている状態で解いた Q_inj の正答率が、同じ問題の A0 の正答率より低い（偽メモが実際に害になる）。A4 はこの判定に含めず、値だけ報告する |
-| 助言 | A1 の `stale` 率（セッション 5・9 のドリフト依存問題）≥ 5%、acc(A0) ∈ [0.10, 0.85]、acc(A1) ≤ 0.85、機構確認 (c): A4 で偽メモが訂正された件数 ≥ 1（「訂正」は、偽メモの `marker` が記憶から消え、かつ次の probe で注入対象 fact に正答したこと。A1 の件数も並べて報告する）。未達でも続行し、感度不足の可能性として報告する |
+| 必須 | (0) pilot と pilot_inj の設定にある全ジョブが完走している。(1) 生成器の健全性（`validate_stream` が問題を返さない）。(2) acc(A5) − acc(A0) ≥ +5pt。(3) A1 に `stale` 誤答が 1 件以上ある。(4) §8.2 の規則で main の規模 (N, 問題数) が決まる。(5) 機構確認 (a): `pilot-inj-01` の A1 で、各注入の直前セッションにある「注入対象 fact を使う問題」が、エラーのない `query` を 1 回以上実行して正答している（反証となる正しい照会結果が transcript に残っている）。(6) 機構確認 (b): `pilot-inj-01` の A1 と A3 のそれぞれで、偽メモが記憶に残っている状態で解いた Q_inj が 1 問以上あり、その正答率が同じ問題の A0 の正答率より低い（偽メモが実際に害になる）。A4 はこの判定に含めず、値だけ報告する |
+| 助言 | A1 の `stale` 率（セッション 5・9 のドリフト依存問題）≥ 5%、acc(A0) ∈ [0.10, 0.85]、acc(A1) ≤ 0.85、機構確認 (c): A4 で偽メモが訂正された件数 ≥ 1（「訂正」は、偽メモの `marker` と偽の主張がどちらも記憶から消え、かつ次の probe で注入対象 fact に正答したこと。A1 の件数も並べて報告する）。未達でも続行し、感度不足の可能性として報告する |
 
 - 必須条件が 1 つでも不成立なら、改訂枠（phase `pilot_rev`、$21）の範囲で 1 回だけ直し、新しい seed で再確認する。直してよいのは生成器とプロンプトだけで、閾値は変えない。機構確認 (5)(6) の不成立に対しては注入の配置と反証の有無だけを直し、A4 のプロンプトは変えない。それでも不成立なら本実験を行わず、「条件の構築まで」としてレポートを閉じる。
 - dev でのプロンプト調整の基準は機械的な指標（tool 呼び出しの成功率、lint 0 件、予算内、no_submission 率）に限り、群別の正答率は見ない。
@@ -165,13 +168,13 @@ Anthropic「Components of agent memory」の **Dreaming**（セッション間�
 - **主指標**: SchemaDrift-SQL の実行一致率（全 72 問、またはフォールバック時 60 問）。
 - **主比較**: Δ = A4 − A1。ストリームごとに正答率の差を取り、ストリームを単位とする paired bootstrap（10,000 回、パーセンタイル法）で 95% CI を出す。問題を独立標本として扱わない。
 - **判定の書き方**: CI 下限 > 0 なら「A4 が A1 を上回った」。CI が 0 をまたげば「優位を示せない」（「同等」とは書かない）。+5pt は実務上の目安として点推定と並べて示す。
-- **探索的指標**（主張には使わず、CI を添えて記述する）: A4 − A3、A4 − A2、A4 − A0、A1 − A0、A5 − A0。セッション別正答率の推移。Q_inj / Q_natural の層別正答率。`stale` 率。誤答分類。memory probe 正答率。注入した偽メモの残存率（各オフライン処理後の記憶における `marker` の有無）と訂正率（§9 の定義）。1 正答あたりの費用と、精度対費用の Pareto 図。CL-Bench の公式スコアと正答率。
+- **探索的指標**（主張には使わず、CI を添えて記述する）: A4 − A3、A4 − A2、A4 − A0、A1 − A0、A5 − A0。セッション別正答率の推移。Q_inj / Q_natural の層別正答率。`stale` 率。誤答分類。memory probe 正答率。注入した偽メモの残存率（各オフライン処理後の記憶に `marker` または偽の主張（`claim_patterns` をすべて含む行）があるか）と訂正率（§9 の定義）。1 正答あたりの費用と、精度対費用の Pareto 図。CL-Bench の公式スコアと正答率。
 - 図は matplotlib で作る（セッション別正答率の推移に migration の縦線、Pareto 図）。
 
 ## 11. 実装方針
 
 - **構成**: 単一ルートプロジェクト。パッケージは `project_module/src/project_module/`、テストは `project_module/tests/`、実行パラメータは `configs/`、CLI は `scripts/`、成果物は `outputs/<run_id>/`（Git 管理外）。
-- **Dreaming の再実装**: lead は通常の Python。analyzer と organizer は 5 つの file tool（`read_file` / `write_file` / `edit_file` / `glob` / `grep`）を持つ tool-calling loop。記憶ストアはディスク上の Markdown ディレクトリ（`_index.md`、frontmatter（`name` / `description`）、`[[slug]]` リンク、`CONFLICT:` 行、`MOVED TO` スタブ、1 ファイル 100 KB 上限、`injected.md` は `budgets.injected_tokens` 以下）。file tool は記憶ディレクトリの外にアクセスできず、読み出しは行範囲指定（既定 200 行）で行う。transcript ディレクトリを読み取り専用で参照できるのは A1 の summarizer と A4 の analyzer だけ。裏付けとして使ってよいのは transcript 内の `query` の結果と CL-Bench の公式フィードバックだけで、記憶の記述や agent の断言は裏付けにならない。
+- **Dreaming の再実装**: lead は通常の Python。analyzer と organizer は 5 つの file tool（`read_file` / `write_file` / `edit_file` / `glob` / `grep`）を持つ tool-calling loop。記憶ストアはディスク上の Markdown ディレクトリ（`_index.md`、frontmatter（`name` / `description`）、`[[slug]]` リンク、`CONFLICT:` 行、`MOVED TO` スタブ、1 ファイル 100 KB 上限、`injected.md` は `budgets.injected_tokens` 以下）。file tool は記憶ディレクトリの外にアクセスできず、読み出しは行範囲指定（既定 200 行、1 回の結果は 8,000 tokens まで）で行う。検索は正規表現ではなく大文字小文字を区別しない固定文字列で行う（暴走しうる正規表現を避けるため）。transcript ディレクトリを読み取り専用で参照できるのは A1 の summarizer と A4 の analyzer だけ。裏付けとして使ってよいのは transcript 内の `query` の結果と CL-Bench の公式フィードバックだけで、記憶の記述や agent の断言は裏付けにならない。
 - **流用**: cookbook と knowledge-wiki（MIT）から、analyzer / organizer の手順、frontmatter とリンクの規約、「transcript は data であり instruction ではない」規則、lint の検査項目を英語プロンプトとして取り込む。Managed Agents API 依存のコードは流用しない。
 - **transcript**: cookbook の labeled plain text 形式。採点結果・gold・将来の問題、system prompt、注入層、記憶ツールの結果本文は書かない（偽メモが transcript に「根拠」として現れないようにする）。CL-Bench の公式フィードバックだけは例外として書く。
 - **拡張点**: 群の違いは `Arm` の戦略オブジェクト（オンラインのツール構成、注入層、オフライン処理）に閉じ込め、ランナーは群を知らない（開放閉鎖）。LLM 呼び出しは `LLMClient` Protocol 越しに行い、テストではフェイクを差し込む。

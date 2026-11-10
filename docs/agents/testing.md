@@ -23,8 +23,7 @@ Detail that is only needed conditionally lives one level down:
 Out of scope for this guide: extracting code from a notebook into
 `project_module/` — this guide applies after the code has been promoted
 to a Python module. Also out of scope: judging model accuracy or loss
-(model evaluation, not unit testing), and investigating CI
-infrastructure failures beyond running the tests locally.
+(model evaluation, not unit testing).
 
 ## What a test is for
 
@@ -66,13 +65,12 @@ Before writing or changing any test:
 1. **`git status`** — note the branch and any uncommitted user changes;
    never overwrite or revert them, and keep your edits separable from
    theirs.
-2. **Read the ground rules**: this file, plus `pytest.ini`, the root
-   `conftest.py`, and the target package's `pyproject.toml`. The marker
-   exclusions and the no-tests-collected trap (see "Run it") all originate
-   there.
+2. **Read the ground rules**: this file, plus `pytest.ini`,
+   `project_module/tests/conftest.py`, and `pyproject.toml`. The marker
+   exclusions (see "Run it") originate there.
 3. **Find the existing tests** for the target package and follow their
    naming and fixture conventions instead of inventing parallel ones.
-4. **Run the relevant tests once** (inside the dev container) to establish
+4. **Run the relevant tests once** (`make test <path>`) to establish
    a baseline. A pre-existing failure is context to report, not something
    to silently absorb into your change.
 5. **A new dependency is an environment change** — if a test seems to need
@@ -230,7 +228,7 @@ real customer data is never committed (`AGENTS.md` §3).
 
 ## Run it
 
-Per `AGENTS.md` §4, run inside the dev container:
+Per `AGENTS.md` §4, run on the host (the `make` targets call `uv run`):
 
 ```bash
 make test                                    # default test paths
@@ -245,14 +243,13 @@ changes.
 
 `make test` runs `uv run pytest`. Two repo-specific traps:
 
-- **`make test` passing does not mean tests ran.** The root `conftest.py`
-  turns pytest's "no tests collected" (exit code 5) into success with only
-  a warning — see the root `conftest.py` to change this behaviour. Check
-  the collected count in the output before reporting green.
+- **`make test` passing does not mean the tests you meant ran.** A path,
+  `-k`, or `-m` filter can select far fewer tests than intended. Check the
+  collected count in the output before reporting green.
 - **`pytest.ini` runs `-m "not integrate and not slow"` by default.** A
-  marked test is excluded from the normal run and from CI. That is usually
-  what you want — but say so explicitly when you add one, so nobody assumes
-  it is being exercised.
+  marked test (`integrate` calls paid APIs or external services) is
+  excluded from the normal run. That is usually what you want — but say so
+  explicitly when you add one, so nobody assumes it is being exercised.
 
 ## Hand off the result
 
@@ -274,9 +271,3 @@ so rather than dropping them silently):
 - Unresolved risks: <unreproduced flakes, pre-existing failures,
   skipped self-checks, or "none">
 ```
-
-## CI
-
-[`test_on_pr_push.yaml`](../../.github/workflows/test_on_pr_push.yaml)
-runs `pytest` on changed packages on PR `opened` / `synchronize` events
-and on push to `main`.

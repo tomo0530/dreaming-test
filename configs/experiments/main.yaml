@@ -1,0 +1,55 @@
+# E3: main run. stream_ids/seeds are cut to N and questions_per_session set to q when the gate fixes the scale; phase_cap_usd becomes 130 only if the scale rule needs the stretch.
+name: main
+phase: main
+task: schemadrift
+arms: [A0, A1, A2, A3, A4, A5]
+stream_ids:
+  - main-01
+  - main-02
+  - main-03
+  - main-04
+  - main-05
+  - main-06
+  - main-07
+  - main-08
+  - main-09
+  - main-10
+  - main-11
+  - main-12
+  - main-13
+  - main-14
+  - main-15
+  - main-16
+  - main-17
+  - main-18
+  - main-19
+  - main-20
+seeds: [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011, 3012, 3013, 3014, 3015, 3016, 3017, 3018, 3019, 3020]
+sessions: 12
+questions_per_session: 6
+inject_false_notes: true
+agent_model: gpt-6-luna
+consolidator_model: gpt-6-luna
+embedding_model: text-embedding-3-large
+agent_reasoning_effort: low
+consolidator_reasoning_effort: medium
+probe_sessions: [4, 8, 12]
+probes_per_checkpoint: 8
+concurrency: 4
+budgets:
+  phase_cap_usd: 120
+  hard_cap_usd: 200.0
+  injected_tokens: 2000
+  max_input_tokens_per_call: 64000
+  online:
+    max_turns: 8
+    max_queries: 8
+    max_completion_tokens: 2048
+    memory_read_tokens: 6000
+    sql_row_limit: 50
+    sql_timeout_s: 5.0
+  consolidation:
+    analyzer_max_turns: 10
+    organizer_max_turns: 12
+    max_completion_tokens: 8192
+    max_input_tokens_per_run: 900000

@@ -33,15 +33,21 @@ Detailed rules live under [`docs/agents/`](./docs/agents/) — see §6.
 
 ## 2. Project Overview
 
-<!-- #### Project-specific overview — replace this block upon adoption #### -->
-> [!NOTE]
-> **TEMPLATE PLACEHOLDER** — fill this in when adopting the template
-> and remove the notice.
-
-* See [`README.md`](./README.md) for directory layout, setup steps,
-  and dev container tips.
-* This repository is a `uv` workspace: the root project plus
-  `project_module/` and `libs/abeja-toolkit/*`.
+* **Purpose**: validate Anthropic-style "Dreaming" (offline memory
+  consolidation that replays transcripts) against a matched Rolling
+  Summary control. Pilot scale: total API spend under $200 on Azure
+  Foundry `gpt-6-luna`.
+* **Layout** (single root `uv` project; see [`README.md`](./README.md)
+  for setup):
+  * `project_module/src/project_module/` — package;
+    `project_module/tests/` — tests.
+  * `configs/` — YAML; the source of truth for run parameters.
+  * `scripts/` — CLIs.
+  * `outputs/<run_id>/` and `data/` — gitignored.
+* **Entry docs**: [`docs/plan/00_design.md`](./docs/plan/00_design.md)
+  (what and why), [`10_implementation-plan.md`](./docs/plan/10_implementation-plan.md)
+  (tasks), [`20_preregistration.md`](./docs/plan/20_preregistration.md)
+  (frozen before the main run).
 
 ## 3. Critical Don'ts (Security & Safety)
 
@@ -49,8 +55,10 @@ Detailed rules live under [`docs/agents/`](./docs/agents/) — see §6.
   credentials. Load them from `.env` files.
 * **PII**: never commit customer data, PII, or logs / notebook
   outputs that contain them.
-* **Licensing**: use only permissive licenses (MIT, Apache-2.0, BSD).
-  GPL / copyleft is forbidden.
+* **Licensing**: use only permissive non-copyleft licenses (MIT,
+  Apache-2.0, BSD, PSF, Zlib, CC0, HPND, ...). GPL, LGPL, MPL, and other
+  copyleft licenses are forbidden, except MPL-2.0 `certifi` and
+  `pathspec` as unmodified transitive dependencies.
 * **Input validation**: validate and sanitize all user input
   (OWASP Top 10).
 * **Destructive Git**: never run `git reset --hard`,
@@ -59,10 +67,12 @@ Detailed rules live under [`docs/agents/`](./docs/agents/) — see §6.
 
 ## 4. Execution Environment
 
-* Run `uv` / `python` / `make` targets **inside the Docker dev
-  container by default** (`make docker-up-cpu` or
-  `make docker-up-gpu`, then `make docker-shell`). Host-only execution
-  requires the user's explicit confirmation.
+* Run `uv`, `python`, and `make` targets on the host (no Docker),
+  e.g. `uv run pytest`.
+* Load secrets with `uv run --env-file .env ...`.
+* Route paid API calls through the metered client and the shared ledger
+  `outputs/cost_ledger.sqlite`. Mark tests that hit paid APIs
+  `integrate`; the default run excludes them.
 * Adding / removing dependencies modifies the environment — ask the
   user before `uv add` / `uv remove`.
 * `pyproject.toml` sets `exclude-newer = "1 week"` (dependency
@@ -71,49 +81,22 @@ Detailed rules live under [`docs/agents/`](./docs/agents/) — see §6.
 
 ## 5. Workflow
 
-1. **Verify**: Run `git status` / `git branch`, identify the current
-   `owner/name` from the local `origin` URL without contacting GitHub,
-   and read only
-   [`.github/repository-initialization.yml`](./.github/repository-initialization.yml)
-   for the initial repository-settings check. For an ordinary task,
-   require schema version `2` and proceed without reading the detailed
-   settings guide only when either:
-   * `status` is `completed`, `repository` matches the current
-     `owner/name`, and the non-empty `completed_audit_revision` equals
-     `required_audit_revision`; or
-   * the current repository is `abeja-inc/dsg-project-template` and its
-     copied default marker has a non-empty `required_audit_revision`,
-     `status: pending`, and empty `repository` and
-     `completed_audit_revision` fields.
-
-   Treat a missing status file, an unsupported schema, or any values not
-   matching those cases—including `pending` outside the template
-   exception, a repository mismatch, or stale revisions—as incomplete.
-   Stop before ordinary task work, report the reason, and wait for
-   explicit approval to initialize. Do not read
-   [`docs/agents/recommended-repository-settings.md`](./docs/agents/recommended-repository-settings.md)
-   until that approval is given. Read it immediately when initialization
-   is approved or the user explicitly requests a fresh audit, even when
-   the local status is otherwise valid. Do not call GitHub settings APIs
-   during the initial local check or before initialization approval.
-2. **Plan & Align**: apply Consensus First (§1) and wait for approval.
-3. **Permission check**: ask before environment-modifying or
+1. **Plan & Align**: apply Consensus First (§1) and wait for approval.
+2. **Permission check**: ask before environment-modifying or
    destructive commands.
-4. **Minimal changes**: only touch what the task requires.
-5. **Implement & Test**: write / update tests following
+3. **Minimal changes**: only touch what the task requires.
+4. **Implement & Test**: write / update tests following
    [`docs/agents/testing.md`](./docs/agents/testing.md) (this includes
    bug fixes, flaky-test diagnosis, and test reviews), run `make test`.
-6. **Quality check**: `make fix` then `make all-lint` until clean
+5. **Quality check**: `make fix` then `make all-lint` until clean
    (verification order: format → type → lint).
-7. **Verify the result**: confirm the output actually satisfies the
+6. **Verify the result**: confirm the output actually satisfies the
    user's requirements and contains no anomalies (e.g. all-null
    columns, off-scale values). Don't declare done until this check
    passes.
-8. **Commit / PR**: only when the user explicitly authorizes it. Use
-   a feature branch whose name passes
-   [`branch_name_verifier.yml`](./.github/workflows/branch_name_verifier.yml);
-   never commit directly to `main` / `develop`. Use the `gh` CLI for
-   PR creation.
+7. **Commit / PR**: only when the user explicitly authorizes it. Work on
+   a feature branch prefixed `feature/`, `fix/`, `docs/`, or `chore/`;
+   never commit directly to `main`. Use the `gh` CLI for PR creation.
 
 ## 6. Detailed Guidelines
 
@@ -125,8 +108,4 @@ Read the relevant file for the task at hand:
 | Writing, running, diagnosing, or reviewing tests; coverage improvement | [`docs/agents/testing.md`](./docs/agents/testing.md) |
 | Linting / formatting / type-checking | [`docs/agents/linting.md`](./docs/agents/linting.md) |
 | ML, data, and notebooks | [`docs/agents/ml-and-data.md`](./docs/agents/ml-and-data.md) |
-| Repository initialization and settings audit | [`docs/agents/recommended-repository-settings.md`](./docs/agents/recommended-repository-settings.md) |
 | Git, PR, branch naming, secret scanning | [`docs/agents/git-and-pr.md`](./docs/agents/git-and-pr.md) |
-| Writing DS logic in `project_module/` / handing it off to ENG (integration contract) | [`docs/ds_integration_contract.md`](./docs/ds_integration_contract.md) |
-| Extracting DS logic from a notebook to `project_module/` | [`.claude/skills/ds-extract/SKILL.md`](./.claude/skills/ds-extract/SKILL.md) (`/ds-extract` skill in Claude Code; other agents read the file directly) |
-| Checking / refactoring DS logic against the integration contract | [`.claude/skills/ds-contract-check/SKILL.md`](./.claude/skills/ds-contract-check/SKILL.md) (`/ds-contract-check` skill in Claude Code; other agents read the file directly) |

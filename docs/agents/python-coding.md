@@ -5,7 +5,7 @@ file. Apply these when writing or modifying Python in this codebase.
 
 ## Package management (`uv` only)
 
-Environment-level rules (Docker default, approval before `uv add`,
+Environment-level rules (host `uv run`, approval before `uv add`,
 dependency cooldowns) are in AGENTS.md §4. Code-level conventions:
 
 * `uv add <pkg>` / `uv add --dev <pkg>` / `uv lock --upgrade-package <pkg>`.
@@ -13,7 +13,7 @@ dependency cooldowns) are in AGENTS.md §4. Code-level conventions:
 
 ## Type hints
 
-* Python 3.10+ modern syntax: `list[str]`, `dict[str, int]`,
+* Python 3.14 modern syntax: `list[str]`, `dict[str, int]`,
   `set[int]`, `tuple[int, int]`, `tuple[int, ...]`, `int | None`.
 * Annotate every function argument and return value.
 * Narrow `Optional` types with explicit `None` checks.

@@ -114,9 +114,8 @@ at all.
 
 ### Which marker a model test gets
 
-`pytest.ini` excludes `integrate` and `slow` from the default run and CI.
-Choose by cost and external dependency — not by whether a "real" object is
-involved:
+`pytest.ini` excludes `integrate` and `slow` from the default run. Choose by
+cost and external dependency — not by whether a "real" object is involved:
 
 | Situation | Marker |
 |---|---|
@@ -126,8 +125,8 @@ involved:
 
 A local file is not an external service: `integrate` means "needs the
 outside world". Whenever you add either marker, state in the handoff that
-the test is excluded from default runs and CI, so nobody assumes it is
-being exercised.
+the test is excluded from the default run, so nobody assumes it is being
+exercised.
 
 ## Fixture data is synthetic only
 

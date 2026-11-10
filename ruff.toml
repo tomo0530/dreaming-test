@@ -1,4 +1,4 @@
-target-version = "py310"
+target-version = "py314"
 line-length = 100
 indent-width = 4
 
@@ -22,10 +22,11 @@ exclude = [
     "buck-out",
     "build",
     "dist",
-    "libs",
     "node_modules",
     "venv",
     "__pycache__",
+    # The plan's code blocks are signature sketches with aligned comments, not code to format.
+    "docs/plan",
 ]
 
 [lint]
@@ -51,8 +52,6 @@ unfixable = [
 [lint.per-file-ignores]
 "__init__.py" = ["E402", "F401"]
 "**/{tests,docs,tools}/*" = ["E402"]
-"libs/**/tests/*" = ["E402", "I001"]
-# NOTE: "I001" を含めたのはテストコードにおける1st-partyと3rd-partyに起因する lint エラーを回避するため
 
 [format]
 quote-style = "double"
