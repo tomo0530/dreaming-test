@@ -7,7 +7,7 @@ import pytest
 from fakes import make_tag
 from openai import omit
 from openai.types import CreateEmbeddingResponse
-from openai.types.chat import ChatCompletion
+from openai.types.responses import Response
 from project_module.config import load_models
 from project_module.layout import ledger_path
 from project_module.llm.foundry import FoundryTransport, foundry_base_url
@@ -18,36 +18,69 @@ from pytest_mock import MockerFixture
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _completion(message: dict[str, Any], *, finish_reason: str = "stop") -> ChatCompletion:
-    return ChatCompletion.model_validate(
+def _response(
+    output: list[dict[str, Any]], *, status: str = "completed", incomplete: str | None = None
+) -> Response:
+    return Response.model_validate(
         {
-            "id": "chatcmpl-1",
-            "object": "chat.completion",
-            "created": 0,
+            "id": "resp-1",
+            "object": "response",
+            "created_at": 0,
             "model": "gpt-6-luna",
-            "choices": [{"index": 0, "finish_reason": finish_reason, "message": message}],
+            "status": status,
+            "incomplete_details": {"reason": incomplete} if incomplete else None,
+            "output": output,
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [],
             "usage": {
-                "prompt_tokens": 120,
-                "completion_tokens": 30,
+                "input_tokens": 120,
+                "input_tokens_details": {"cached_tokens": 100, "cache_write_tokens": 0},
+                "output_tokens": 30,
+                "output_tokens_details": {"reasoning_tokens": 10},
                 "total_tokens": 150,
-                "prompt_tokens_details": {"cached_tokens": 100},
             },
         }
     )
 
 
-def _transport_with(mocker: MockerFixture, completion: Any) -> tuple[FoundryTransport, MagicMock]:
+def _text(text: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "id": "m1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "text": text, "annotations": []}],
+    }
+
+
+def _call(call_id: str, arguments: str) -> dict[str, Any]:
+    return {
+        "type": "function_call",
+        "id": f"fc_{call_id}",
+        "call_id": call_id,
+        "name": "query",
+        "arguments": arguments,
+        "status": "completed",
+    }
+
+
+def _transport_with(mocker: MockerFixture, response: Any) -> tuple[FoundryTransport, MagicMock]:
     openai_cls = mocker.patch("project_module.llm.foundry.OpenAI")
     sdk = openai_cls.return_value
-    sdk.chat.completions.create.return_value = completion
-    sdk.embeddings.create.return_value = completion
+    sdk.responses.create.return_value = response
+    sdk.embeddings.create.return_value = response
     return FoundryTransport("https://h.example/openai/v1/", "key"), openai_cls
 
 
-def _chat(transport: FoundryTransport, tools: list[dict[str, Any]] | None = None) -> Any:
+def _chat(
+    transport: FoundryTransport,
+    tools: list[dict[str, Any]] | None = None,
+    messages: list[dict[str, Any]] | None = None,
+) -> Any:
     return transport.chat(
         model="gpt-6-luna",
-        messages=[{"role": "user", "content": "hi"}],
+        messages=messages or [{"role": "user", "content": "hi"}],
         tools=tools,
         reasoning_effort="low",
         max_completion_tokens=64,
@@ -67,7 +100,7 @@ def test_foundry_base_url_rejects_endpoint_without_https_host() -> None:
 
 
 def test_foundry_transport_disables_sdk_retries(mocker: MockerFixture) -> None:
-    _, openai_cls = _transport_with(mocker, _completion({"role": "assistant", "content": "x"}))
+    _, openai_cls = _transport_with(mocker, _response([_text("x")]))
 
     kwargs = openai_cls.call_args.kwargs
     assert (kwargs["max_retries"], kwargs["base_url"], kwargs["timeout"]) == (
@@ -78,24 +111,23 @@ def test_foundry_transport_disables_sdk_retries(mocker: MockerFixture) -> None:
 
 
 def test_foundry_transport_omits_temperature(mocker: MockerFixture) -> None:
-    transport, openai_cls = _transport_with(
-        mocker, _completion({"role": "assistant", "content": "x"})
-    )
+    transport, openai_cls = _transport_with(mocker, _response([_text("x")]))
 
     _chat(transport)
 
-    kwargs = openai_cls.return_value.chat.completions.create.call_args.kwargs
+    kwargs = openai_cls.return_value.responses.create.call_args.kwargs
     assert "temperature" not in kwargs
     assert kwargs.get("tools", omit) is omit
-    assert (kwargs["max_completion_tokens"], kwargs["reasoning_effort"], kwargs["model"]) == (
+    assert (kwargs["max_output_tokens"], kwargs["reasoning"], kwargs["model"]) == (
         64,
-        "low",
+        {"effort": "low"},
         "gpt-6-luna",
     )
+    assert kwargs["store"] is False
 
 
 def test_foundry_transport_maps_usage_with_cached_tokens(mocker: MockerFixture) -> None:
-    transport, _ = _transport_with(mocker, _completion({"role": "assistant", "content": "answer"}))
+    transport, _ = _transport_with(mocker, _response([_text("answer")]))
 
     result = _chat(transport)
 
@@ -108,29 +140,24 @@ def test_foundry_transport_maps_usage_with_cached_tokens(mocker: MockerFixture) 
     assert result.assistant_message == {"role": "assistant", "content": "answer"}
 
 
+def test_foundry_transport_reports_length_when_output_limit_hit(mocker: MockerFixture) -> None:
+    transport, _ = _transport_with(
+        mocker, _response([], status="incomplete", incomplete="max_output_tokens")
+    )
+
+    assert _chat(transport).finish_reason == "length"
+
+
 def test_foundry_transport_parses_tool_calls_and_keeps_raw_arguments(
     mocker: MockerFixture,
 ) -> None:
-    message = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": "c1",
-                "type": "function",
-                "function": {"name": "query", "arguments": '{"sql": "SELECT 1"}'},
-            },
-            {"id": "c2", "type": "function", "function": {"name": "query", "arguments": "{bad"}},
-            {"id": "c3", "type": "function", "function": {"name": "query", "arguments": "[1]"}},
-        ],
-    }
-    transport, openai_cls = _transport_with(
-        mocker, _completion(message, finish_reason="tool_calls")
-    )
+    output = [_call("c1", '{"sql": "SELECT 1"}'), _call("c2", "{bad"), _call("c3", "[1]")]
+    transport, openai_cls = _transport_with(mocker, _response(output))
     tools = [{"type": "function", "function": {"name": "query", "parameters": {}}}]
 
     result = _chat(transport, tools=tools)
 
+    assert result.finish_reason == "tool_calls"
     assert [c.arguments for c in result.tool_calls] == [
         {"sql": "SELECT 1"},
         {"__invalid__": "{bad"},
@@ -141,7 +168,36 @@ def test_foundry_transport_parses_tool_calls_and_keeps_raw_arguments(
         "type": "function",
         "function": {"name": "query", "arguments": "{bad"},
     }
-    assert openai_cls.return_value.chat.completions.create.call_args.kwargs["tools"] == tools
+    sent_tools = openai_cls.return_value.responses.create.call_args.kwargs["tools"]
+    assert sent_tools == [{"type": "function", "name": "query", "parameters": {}}]
+
+
+def test_foundry_transport_translates_chat_history_to_response_items(
+    mocker: MockerFixture,
+) -> None:
+    transport, openai_cls = _transport_with(mocker, _response([_text("done")]))
+    history = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "q"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "query", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "1"},
+    ]
+
+    _chat(transport, messages=history)
+
+    sent = openai_cls.return_value.responses.create.call_args.kwargs["input"]
+    assert sent == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "q"},
+        {"type": "function_call", "call_id": "c1", "name": "query", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "1"},
+    ]
 
 
 def test_foundry_transport_embeds_in_index_order(mocker: MockerFixture) -> None:

@@ -1,4 +1,9 @@
-"""`ChatTransport` for the OpenAI-compatible v1 endpoint of an Azure AI Foundry resource."""
+"""`ChatTransport` for the OpenAI-compatible v1 endpoint of an Azure AI Foundry resource.
+
+Chat calls go through the Responses API: gpt-6-luna rejects function tools combined with
+`reasoning_effort` on /chat/completions. The rest of the harness keeps chat-style messages;
+this module translates them to Responses input items and back.
+"""
 
 import json
 import os
@@ -6,12 +11,7 @@ from typing import Any, Final, Self, cast
 from urllib.parse import urlsplit
 
 from openai import OpenAI, omit
-from openai.types.chat import (
-    ChatCompletion,
-    ChatCompletionMessageParam,
-    ChatCompletionToolUnionParam,
-)
-from openai.types.shared import ReasoningEffort
+from openai.types.responses import Response
 
 from project_module.contracts import ChatResult, ToolCall, Usage
 from project_module.llm import INVALID_ARGUMENTS_KEY
@@ -41,47 +41,90 @@ def _parse_arguments(raw: str) -> dict[str, Any]:
     return parsed
 
 
-def _to_chat_result(completion: ChatCompletion) -> ChatResult:
-    if not completion.choices:
-        raise RuntimeError("chat completion has no choices")
-    if completion.usage is None:
-        raise RuntimeError("chat completion has no usage")
-    choice = completion.choices[0]
-    message = choice.message
+def _to_response_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten chat-style `{"type": "function", "function": {...}}` schemas."""
+    flat: list[dict[str, Any]] = []
+    for tool in tools:
+        function = tool.get("function", tool)
+        item: dict[str, Any] = {"type": "function", "name": function["name"]}
+        if "description" in function:
+            item["description"] = function["description"]
+        item["parameters"] = function.get("parameters", {"type": "object", "properties": {}})
+        flat.append(item)
+    return flat
+
+
+def _to_response_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate chat-style messages (incl. assistant tool calls and tool results)."""
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role == "tool":
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message["tool_call_id"],
+                    "output": str(message.get("content") or ""),
+                }
+            )
+            continue
+        content = message.get("content")
+        if content:
+            items.append({"role": role, "content": content})
+        if role == "assistant":
+            for call in message.get("tool_calls") or []:
+                function = call["function"]
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call["id"],
+                        "name": function["name"],
+                        "arguments": function["arguments"],
+                    }
+                )
+    return items
+
+
+def _to_chat_result(response: Response) -> ChatResult:
+    if response.usage is None:
+        raise RuntimeError("response has no usage")
     tool_calls: list[ToolCall] = []
     raw_calls: list[dict[str, Any]] = []
-    for call in message.tool_calls or []:
-        if call.type != "function":
-            raise RuntimeError(f"unsupported tool call type {call.type!r}")
+    for item in response.output:
+        if item.type != "function_call":
+            continue
         tool_calls.append(
-            ToolCall(
-                id=call.id,
-                name=call.function.name,
-                arguments=_parse_arguments(call.function.arguments),
-            )
+            ToolCall(id=item.call_id, name=item.name, arguments=_parse_arguments(item.arguments))
         )
         raw_calls.append(
             {
-                "id": call.id,
+                "id": item.call_id,
                 "type": "function",
-                "function": {"name": call.function.name, "arguments": call.function.arguments},
+                "function": {"name": item.name, "arguments": item.arguments},
             }
         )
-    # Rebuilt by hand so only fields the API accepts on input are sent back next turn.
-    assistant_message: dict[str, Any] = {"role": "assistant", "content": message.content}
+    text = response.output_text or None
+    assistant_message: dict[str, Any] = {"role": "assistant", "content": text}
     if raw_calls:
         assistant_message["tool_calls"] = raw_calls
-    details = completion.usage.prompt_tokens_details
+    incomplete = response.incomplete_details
+    if response.status == "incomplete" and incomplete is not None:
+        finish_reason = (
+            "length" if incomplete.reason == "max_output_tokens" else str(incomplete.reason)
+        )
+    else:
+        finish_reason = "tool_calls" if tool_calls else "stop"
+    details = response.usage.input_tokens_details
     cached = details.cached_tokens if details is not None and details.cached_tokens else 0
     return ChatResult(
-        content=message.content,
+        content=text,
         tool_calls=tool_calls,
         usage=Usage(
-            input_tokens=completion.usage.prompt_tokens,
+            input_tokens=response.usage.input_tokens,
             cached_input_tokens=cached,
-            output_tokens=completion.usage.completion_tokens,
+            output_tokens=response.usage.output_tokens,
         ),
-        finish_reason=choice.finish_reason,
+        finish_reason=finish_reason,
         assistant_message=assistant_message,
     )
 
@@ -112,15 +155,17 @@ class FoundryTransport:
         reasoning_effort: str,
         max_completion_tokens: int,
     ) -> ChatResult:
-        # `temperature` is never sent: reasoning deployments reject it.
-        completion = self._client.chat.completions.create(
+        # `temperature` is never sent: reasoning deployments reject it. Reasoning items are
+        # not carried between turns (store=False, stateless calls).
+        response = self._client.responses.create(
             model=model,
-            messages=cast(list[ChatCompletionMessageParam], messages),
-            tools=cast(list[ChatCompletionToolUnionParam], tools) if tools else omit,
-            reasoning_effort=cast(ReasoningEffort, reasoning_effort),
-            max_completion_tokens=max_completion_tokens,
+            input=cast(Any, _to_response_input(messages)),
+            tools=cast(Any, _to_response_tools(tools)) if tools else omit,
+            reasoning=cast(Any, {"effort": reasoning_effort}),
+            max_output_tokens=max_completion_tokens,
+            store=False,
         )
-        return _to_chat_result(completion)
+        return _to_chat_result(response)
 
     def embed(self, *, model: str, texts: list[str]) -> tuple[list[list[float]], Usage]:
         response = self._client.embeddings.create(model=model, input=texts)
