@@ -62,3 +62,8 @@
   - `scripts/supplementary_analysis.py`: 層別の正答率、SQL 実行数、ツール呼び出し数、Q_inj の内訳を出す。出力は `artifacts/main-supplementary.json`。
   - transcript の読み取り専用診断（Opus サブエージェント）: 結果は `artifacts/main-diagnosis.md`。
 - R2 レビュー: Opus（xhigh）の指摘（ツール呼び出し数の二重計上、因果表現、偽メモ検出器の誤検出、CL-Bench の解釈など）を反映した。Codex gpt-6.1-sol の 1 回目は、標準入力を待ったまま止まったため停止し、修正後の版で実行し直した。その指摘（採点フィードバックについての表現、A3 の Q_inj 非正答 31 問、丸め、補助集計の除外処理と回帰テスト）を反映し、Opus は再確認で APPROVE とした。Codex の再確認で残った 1 件（回帰テストの追加）も反映し、テストが除外処理の欠落を検出することを確かめた。
+
+### 投稿と完了（2026-11-11）
+- PR #3（結果と報告）をマージした。
+- Notion「新規技術検証」DB にレポートを投稿した（図 2 枚を添付。Status は Done、FY は FY27H1、MGR checked は未チェック）。FY について、過去 2 件（2026-05・2026-07 完了）は FY26H2 だった。2026-11 の完了は下期をまたぐため、FY27H1 とした。
+- `10_implementation-plan.md` のチェックリストを、実施結果に合わせて更新した。
