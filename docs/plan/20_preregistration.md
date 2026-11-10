@@ -50,3 +50,7 @@ A4 − A3、A4 − A2、A4 − A0、A1 − A0、A5 − A0 の差と 95% CI。セ
 | `configs/experiments/main.yaml` の SHA-256 | `6cad0244a5efcca900f8e6273e0cfb15e46309aaeaf6be73bea2aebc0371ed4b` |
 | main の各 `stream.json` の SHA-256（先頭 16 桁。全桁は run の manifest.json） | main-01 `3704e8351c1109c6`<br>main-02 `6b95d4b5ef4e5308`<br>main-03 `6708f65322825523`<br>main-04 `0ffdbfd32c3a9aee`<br>main-05 `02fe6feef2ad3bfa`<br>main-06 `6c4c32af025c8154`<br>main-07 `c0a8517e82bc09ec`<br>main-08 `ce5ca092442684d5`<br>main-09 `85955f5116a20a56`<br>main-10 `a3affe10aaa86965`<br>main-11 `3ea71241170f8f1e`<br>main-12 `ba0339e1e0b7ba1f`<br>main-13 `e08ac8af8186cab4`<br>main-14 `813aa7af7bb6c82f`<br>main-15 `084fa58bac06f3c0`<br>main-16 `0b07fc0b763db711`<br>main-17 `da030f5626071d70`<br>main-18 `7268a4986446feb9`<br>main-19 `d402ca34b9d984e6`<br>main-20 `f22421f5dc88113f` |
 | コードの commit SHA | `a780239`（本ファイルを凍結する commit の親） |
+
+## 5. 凍結後の運用上の変更
+
+- 2026-11-11: `configs/experiments/main.yaml` の `concurrency` を 4 から 16 に変更した（同時に走らせるジョブ数のみで、モデル・予算・群・ストリームなど結果に関わる値は変更なし）。変更後の SHA-256 は `651f82e4e99561933f1989deee17770c2624389a1af2d800b14513180f2c9b77`。変更前に開始した run（約 30 秒、セッション 1 の途中）は破棄した。
