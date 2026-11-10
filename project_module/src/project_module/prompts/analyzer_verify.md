@@ -18,7 +18,7 @@ Every page except `_index.md`, `injected.md` and stubs starts with this frontmat
     description: <one line on what the page covers and when to read it>
     ---
 
-A slug is short, lowercase and hyphen-separated, and unique in the whole directory, stubs included. `[[slug]]` links a page by its slug.
+A slug is short, lowercase and hyphen-separated, and unique in the whole directory, stubs included. The frontmatter must be valid YAML: keep `description` on one line and wrap it in double quotes if it contains `: ` or starts with a special character such as a backtick, `[`, `*` or `-`. `[[slug]]` links a page by its slug.
 
 ## Steps
 

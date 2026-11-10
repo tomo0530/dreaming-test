@@ -42,7 +42,7 @@ Do not invent facts and do not delete fact lines: you are reorganizing, not re-a
 
 The directory is checked mechanically, and every failure is recorded against this run:
 - every page other than `_index.md`, `injected.md` and stubs has frontmatter whose `name` equals its file name without `.md` and whose `description` is not empty;
-- the frontmatter is valid YAML: keep `description` on one line, and quote it if it contains `: ` or starts with a special character;
+- the frontmatter is valid YAML: keep `description` on one line, and wrap it in double quotes if it contains `: ` or starts with a special character such as a backtick, `[`, `*` or `-`;
 - every `[[slug]]` link, in any file, names an existing page;
 - `_index.md` exists, lists every live page and lists no stub;
 - `injected.md` fits in $injected_tokens tokens.
