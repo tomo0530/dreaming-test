@@ -84,9 +84,29 @@
 | Review R1（並行レビュー、一括修正、PR・マージ） | 完了 | 本台帳 2026-11-10「R1 レビュー」。commit `8360c73`・`e72efc1`。PR #2 は 2026-11-10T13:48Z にマージ |
 | E1（ストリーム生成と SHA の記録、integrate テスト、dev の調整と実測） | 完了 | 本台帳 2026-11-10 の E1 と、上の「dev の実測 token」。commit `b5bae39` |
 | E2（pilot・pilot_inj の実行と gate） | 完了 | 本台帳 2026-11-11 の E2。`artifacts/pilot-gate-original.json` |
-| E2（gate が偽のときの改訂、`pilot_rev`・`pilot_inj_rev` の実行） | **未実施（逸脱）** | 協議（Codex sol / Opus / astra / fable、Gemini の裁定）の結果、改訂は行わず、機構確認 (5)(6) を探索的指標に格下げして main へ進んだ。凍結前に決めて記録した（本台帳 E2 の 3、事前登録 §0）。main の実行後に改訂版の pilot を回しても、開始条件の判定には使えない。このため事後には実施しない |
+| E2（gate が偽のときの改訂、`pilot_rev`・`pilot_inj_rev` の実行） | 完了（本実験の後に事後で実施） | 本台帳「E2 改訂手順の事後実施」。commit `d71c2f4`。`artifacts/pilot-gate-revision.json`。改訂後も不合格 |
 | E2（規模の確定、main のストリーム生成、事前登録の凍結） | 完了 | commit `0ad62f3`。事前登録 §4 |
 | E3（main の実行） | 完了 | run `main-20261110T161346Z`。120 ジョブすべて完走 |
 | E4（CL-Bench の取得と実行） | 完了 | run `clbench-20261110T141842Z`。9 ジョブすべて完走 |
 | E5（解析、40_results.md、Notion 原稿） | 完了 | `outputs/analysis/{main,clbench}/metrics.json`。`40_results.md`。commit `31e3771` |
 | Review R2（並行レビュー、修正、PR・マージ、Notion への投稿） | 完了 | 本台帳 E5 の R2 の項（Opus は再確認で APPROVE、Codex の残件も反映）。PR #3 は 2026-11-10T20:00Z にマージ。Notion のページを投稿し、Status を Done にした |
+
+### E2 改訂手順の事後実施（2026-11-11、本実験の後）
+- 背景: 停止フックの指摘を受けて、計画の手順どおりに改訂を 1 回実施した。本実験はすでに逸脱として実施済みなので、この結果は開始条件の判定には使わず、探索的な情報として扱う。
+- 改訂の内容（`00_design.md` §9。直してよいのは注入の配置だけ）:
+  - 偽メモを、オフライン処理の後に注入するように変えた。
+  - 注入時に `injected.md` にも追記し、次のセッションの注入層に偽メモが入った状態にした。
+  - 設定 `false_note_timing: after_consolidation`、commit `d71c2f4`。A4 のプロンプトと閾値は変えていない。
+- ストリーム:
+  - `pilot-rev-01`〜`04`（seed 2101〜2104）は、E1 で生成したものが現行の生成器で再生成した結果と一致した。
+  - `pilot-inj-rev-01`（seed 2601）は、検出器の修正（commit `a780239`）でストリームの形式が変わったため、現行の生成器で作り直した。SHA-256 は `60424e3e5834c0497f8b664ac06db8802f2c3cb07929ba4a97849dad9bd43ae0`。各 run の manifest にも記録されている。
+- run:
+  - `pilot_rev-20261110T200756Z`（15 ジョブ）と `pilot_inj_rev-20261110T200756Z`（4 ジョブ）は、どちらも完走した。
+  - 運用上の変更として、`concurrency` を 16 にした。
+  - 費用は $1.28 で、累計は $11.85。ログにエンドポイントのホスト名や URL はなかった。
+- gate（`artifacts/pilot-gate-revision.json`）: `passed = false`。
+  - (6b-A1) は未達。A1 で偽メモが残った状態の Q_inj は 2 問あり、どちらも正答した。A0 も 2 問とも正答した。
+  - oracle_gain は未達。acc_A0 = 0.927、acc_A5 = 0.938 で、差は +1.0pt だった。
+  - (6b-A3) は成立した。A3 は 6 問中 3 問を正答し、A0 は 6 問とも正答した。
+  - 助言 a4_corrects は成立した（A4・A1 とも 2 件を訂正）。
+- 計画の規則では「改訂後も不合格なら、本実験を行わず『条件の構築まで』で報告を閉じる」となる。結果報告書 `40_results.md` §8 の 6 にその旨を明記し、本実験の結果は「事前に定めた開始条件を満たさないまま実施した結果」として読むよう注記した。
