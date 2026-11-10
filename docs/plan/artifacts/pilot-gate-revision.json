@@ -1,0 +1,50 @@
+{
+  "passed": false,
+  "required": {
+    "generator_ok": true,
+    "oracle_gain": false,
+    "a1_stale": true,
+    "scale": true,
+    "evidence_present": true,
+    "false_note_harms_a1": false,
+    "false_note_harms_a3": true
+  },
+  "advisory": {
+    "a1_stale_rate": true,
+    "a0_range": false,
+    "a1_max_acc": true,
+    "a4_corrects": true
+  },
+  "values": {
+    "acc_A0": 0.9270833333333334,
+    "acc_A1": 0.84375,
+    "acc_A5": 0.9375,
+    "oracle_gain": 0.01041666666666663,
+    "a1_stale_count": 16.0,
+    "a1_stale_rate": 0.08571428571428572,
+    "c_online": 0.18335134000000003,
+    "c_fixed": 0.22152175750000003,
+    "evidence_ok_count": 2.0,
+    "evidence_total_count": 2.0,
+    "a1_false_note_rows": 2.0,
+    "a1_false_note_acc": 1.0,
+    "a1_false_note_a0_acc": 1.0,
+    "a3_false_note_rows": 6.0,
+    "a3_false_note_acc": 0.5,
+    "a3_false_note_a0_acc": 1.0,
+    "a4_false_note_rows": 2.0,
+    "a4_false_note_acc": 1.0,
+    "a4_false_note_a0_acc": 1.0,
+    "a4_corrections": 2.0,
+    "a1_corrections": 2.0
+  },
+  "notes": [
+    "required condition oracle_gain is not met",
+    "required condition false_note_harms_a1 is not met",
+    "advisory condition a0_range is not met; the pilot may lack sensitivity"
+  ],
+  "scale": [
+    20,
+    6
+  ]
+}

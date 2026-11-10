@@ -45,6 +45,7 @@ from project_module.manifest import (
     file_sha256,
     git_state,
     load_manifest,
+    matches_config,
     write_manifest,
 )
 from project_module.memory.store import MemoryStore
@@ -247,7 +248,8 @@ def run_stream_arm(
     """Run, or resume, the sessions of `arm_name` on the stream of `env`.
 
     Each session runs the questions, injects the false notes due after it (when the config
-    injects), lets the arm consolidate, asks the probes (SchemaDrift checkpoints only), then
+    injects; before or after the consolidation per `false_note_timing`), lets the arm
+    consolidate, asks the probes (SchemaDrift checkpoints only), then
     writes the session's rows, snapshots memory and index, and updates `status.json`. A
     completed job returns at once. `stop` is checked when the job starts, before every
     session and before every question; a stopped job records the stop's reason as its status
@@ -349,14 +351,23 @@ def _prepare_job(
     )
 
 
+def _inject_due_notes(arm: Arm, ctx: ArmContext, session: int, *, expose: bool) -> None:
+    if not ctx.config.inject_false_notes or ctx.stream is None:
+        return
+    for note in ctx.stream.injections:
+        if note.after_session == session:
+            arm.inject_false_note(ctx, note, expose=expose)
+
+
 def _run_one_session(arm: Arm, ctx: ArmContext, session: int) -> None:
     layout, stream_id = ctx.layout, ctx.stream_id
     results = run_session(arm, ctx, session)
-    if ctx.config.inject_false_notes and ctx.stream is not None:
-        for note in ctx.stream.injections:
-            if note.after_session == session:
-                arm.inject_false_note(ctx, note)
+    after = ctx.config.false_note_timing == "after_consolidation"
+    if not after:
+        _inject_due_notes(arm, ctx, session, expose=False)
     record = arm.after_session(ctx, session)
+    if after:
+        _inject_due_notes(arm, ctx, session, expose=True)
     probe_due = ctx.stream is not None and session in ctx.config.probe_sessions
     probes = run_probes(arm, ctx, session) if probe_due else None
 
@@ -620,7 +631,7 @@ def _start_run(config: ExperimentConfig, out_root: Path, inputs: dict[str, str])
 
 def _check_resumable(run_dir: Path, config: ExperimentConfig, inputs: dict[str, str]) -> None:
     manifest = load_manifest(run_dir)
-    if manifest.config_sha256 != config_sha256(config):
+    if not matches_config(manifest.config_sha256, config):
         raise ValueError(f"{run_dir} was started with a different configuration")
     if manifest.input_sha256 != inputs:
         raise ValueError(f"the stream files of {run_dir} have changed since it started")

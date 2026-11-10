@@ -9,6 +9,10 @@ seeds: [2601]
 sessions: 12
 questions_per_session: 6
 inject_false_notes: true
+# Post-hoc E2 revision: inject after the consolidation and expose the note in injected.md, so
+# the next session starts with it. This changes the injection timing and target, beyond the
+# generator-only scope of 00_design 9 (disclosed in 40_results.md section 8).
+false_note_timing: after_consolidation
 agent_model: gpt-6-luna
 consolidator_model: gpt-6-luna
 embedding_model: text-embedding-3-large
@@ -16,7 +20,7 @@ agent_reasoning_effort: low
 consolidator_reasoning_effort: medium
 probe_sessions: [4, 8, 12]
 probes_per_checkpoint: 8
-concurrency: 4
+concurrency: 16
 budgets:
   phase_cap_usd: 21
   hard_cap_usd: 200.0

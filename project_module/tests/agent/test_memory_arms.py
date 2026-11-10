@@ -154,6 +154,29 @@ def test_injection_targets_per_arm(tmp_path: Path, arm: MemoryArm, target: str) 
     assert memory.read_all(target).endswith(FALSE_NOTE.text)
 
 
+@pytest.mark.parametrize(
+    ("arm", "target"),
+    [
+        (RollingSummaryArm(), "summary.md"),
+        (OrganizeOnlyArm(), NOTE_PATH),
+        (VerifiedDreamingArm(), NOTE_PATH),
+    ],
+    ids=["A1", "A3", "A4"],
+)
+def test_exposed_injection_also_puts_the_note_first_in_injected_md(
+    tmp_path: Path, arm: MemoryArm, target: str
+) -> None:
+    ctx = _make_ctx(tmp_path)
+    memory = _memory(ctx)
+    memory.write("injected.md", "# Memory\n- verified rule\n")
+
+    arm.inject_false_note(ctx, FALSE_NOTE, expose=True)
+
+    assert memory.read_all(target).endswith(FALSE_NOTE.text)
+    # First, because the injected layer is truncated from the end.
+    assert memory.read_all("injected.md") == f"{FALSE_NOTE.text}\n# Memory\n- verified rule\n"
+
+
 def test_a1_appends_false_note_after_existing_summary(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     summary = "## order_status\n- order_status code 3 means shipped (verified s2)\n"

@@ -21,7 +21,7 @@ agent_reasoning_effort: low
 consolidator_reasoning_effort: medium
 probe_sessions: [4, 8, 12]
 probes_per_checkpoint: 8
-concurrency: 4
+concurrency: 16
 budgets:
   phase_cap_usd: 21
   hard_cap_usd: 200.0

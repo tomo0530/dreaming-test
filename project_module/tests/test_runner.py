@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import logging
@@ -15,7 +16,7 @@ from project_module.contracts import ChatResult, CostTag, QuestionResult, ToolCh
 from project_module.layout import RunLayout
 from project_module.llm.ledger import CostLedger
 from project_module.llm.metered import MeteredClient
-from project_module.manifest import load_manifest
+from project_module.manifest import config_sha256, load_manifest
 from project_module.memory.store import MemoryStore, false_notes_present
 from project_module.runner import (
     InvalidStreamError,
@@ -226,6 +227,31 @@ def test_injection_happens_before_consolidation(tmp_path: Path) -> None:
 
     assert at_consolidation == {1: [], 2: [], 3: [MARKER]}
     assert false_notes_present(memory, notes) == [MARKER]
+
+
+def test_injection_after_consolidation_reaches_the_next_session_first(tmp_path: Path) -> None:
+    config = _config(arms=["A4"], inject_false_notes=True, false_note_timing="after_consolidation")
+    layout = RunLayout(tmp_path / "run")
+    memory = MemoryStore(layout.memory_dir(STREAM_ID, "A4"), writable=True)
+    notes = [make_stream(tmp_path / "s").injections[0]]
+    at_consolidation: dict[int, list[str]] = {}
+    online_prompts: dict[int, str] = {}
+
+    def observe(tag: CostTag, messages: list[dict[str, Any]]) -> None:
+        if tag.component == "consolidation":
+            at_consolidation.setdefault(tag.session, false_notes_present(memory, notes))
+        if tag.component == "online":
+            online_prompts.setdefault(tag.session, str(messages[0]["content"]))
+
+    client = RunnerLLM(observe=observe)
+    assert _run_job(config, _env(), "A4", layout, client, stream_root=tmp_path / "s") == "completed"
+
+    assert at_consolidation == {1: [], 2: [], 3: []}
+    assert MARKER not in online_prompts[3]
+    assert MARKER in online_prompts[4]
+    assert any(path.startswith("notes/") for path in memory.glob("**/*"))
+    snapshot = MemoryStore(layout.snapshot_dir(STREAM_ID, "A4", 3) / "memory", writable=False)
+    assert MARKER in snapshot.read_all("injected.md")
 
 
 def test_stop_set_before_start_records_budget_exhausted_without_calls(tmp_path: Path) -> None:
@@ -474,3 +500,31 @@ def test_interrupt_stops_jobs_records_interrupted_and_releases_the_lock(
     assert len(client.tags) == 1 and client.tags[0].stream_id == "c-01"
     with run_lock(run_dir):
         pass
+
+
+def test_config_digest_of_the_default_timing_matches_manifests_written_before_the_field() -> None:
+    config = _config(inject_false_notes=True)
+    legacy_digest = hashlib.sha256(
+        config.model_dump_json(exclude={"false_note_timing"}).encode("utf-8")
+    ).hexdigest()
+
+    assert config_sha256(config) == legacy_digest
+    after = config.model_copy(update={"false_note_timing": "after_consolidation"})
+    assert config_sha256(after) != legacy_digest
+
+
+def test_resume_accepts_the_full_dump_digest_recorded_by_earlier_code(tmp_path: Path) -> None:
+    config = _small_config("legacy", ["l-01"], [20])
+    generate_streams(config, tmp_path / "streams")
+    kwargs: dict[str, Any] = {
+        "out_root": tmp_path / "outputs",
+        "streams_root": tmp_path / "streams",
+        "clbench_root": tmp_path / "none",
+    }
+    run_dir = run_experiment(config, client=RunnerLLM(), **kwargs)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["config_sha256"] = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    assert run_experiment(config, client=RunnerLLM(), resume=run_dir, **kwargs) == run_dir

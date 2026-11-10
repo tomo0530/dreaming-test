@@ -117,12 +117,15 @@ class RollingSummaryArm(_MemoryArm):
             ),
         ]
 
-    def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:
+    def inject_false_note(
+        self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
+    ) -> None:
         """Append the note to the end of `summary.md`, creating the file if needed."""
         memory = require_memory(ctx)
         _require_marker(note)
-        current = memory.read_all(SUMMARY_FILE) if memory.exists(SUMMARY_FILE) else ""
-        memory.write(SUMMARY_FILE, _append_paragraph(current, note.text))
+        _append_to(memory, SUMMARY_FILE, note.text)
+        if expose:
+            _prepend_to(memory, INJECTED_FILE, note.text)
         logger.info(
             "%s/%s: false note on %s appended to %s",
             ctx.stream_id,
@@ -138,13 +141,17 @@ class _WikiArm(_MemoryArm):
     lint_profile: LintProfile = "wiki"
     notes_prefix = NOTES_PREFIX
 
-    def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:
+    def inject_false_note(
+        self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
+    ) -> None:
         """Write the note as a new file under `notes/`, named after its first line."""
         memory = require_memory(ctx)
         _require_marker(note)
         slug = _unused_slug(memory, _note_slug(note.text))
         path = f"{NOTES_PREFIX}{slug}.md"
         memory.write(path, note.text.strip() + "\n")
+        if expose:
+            _prepend_to(memory, INJECTED_FILE, note.text)
         logger.info(
             "%s/%s: false note on %s written to %s", ctx.stream_id, self.name, note.fact_id, path
         )
@@ -189,6 +196,19 @@ def _require_marker(note: InjectedNote) -> None:
     # Survival of a false note is measured by its marker, so a note without it is unusable.
     if note.marker not in note.text:
         raise ValueError(f"the false note on {note.fact_id} does not contain its marker")
+
+
+def _prepend_to(memory: MemoryStore, path: str, paragraph: str) -> None:
+    """Put `paragraph` first: the injected layer is truncated from the end."""
+    current = memory.read_all(path) if memory.exists(path) else ""
+    memory.write(
+        path, _append_paragraph(paragraph, current) if current.strip() else paragraph.strip() + "\n"
+    )
+
+
+def _append_to(memory: MemoryStore, path: str, paragraph: str) -> None:
+    current = memory.read_all(path) if memory.exists(path) else ""
+    memory.write(path, _append_paragraph(current, paragraph))
 
 
 def _append_paragraph(text: str, paragraph: str) -> str:
