@@ -5,13 +5,9 @@ file. Apply these when committing, pushing, or creating PRs.
 
 ## Branch naming
 
-* Use a feature branch whose name passes
-  [`branch_name_verifier.yml`](../../.github/workflows/branch_name_verifier.yml).
-* Standard prefixes (see `README.md` for the full convention):
-  `feat/` (or `feature/`), `fix/`, `doc/`, `change/` / `rename/`,
-  `refactor/` / `style/` / `chore/`, `test/`, `dep/` / `dependabot/`,
-  `release/`.
-* **Never** commit directly to `main` / `develop`.
+* Use a feature branch prefixed `feature/`, `fix/`, `docs/`, or
+  `chore/` (for example `feature/dreaming-harness`).
+* **Never** commit directly to `main`.
 
 ## Commits
 
@@ -22,44 +18,21 @@ file. Apply these when committing, pushing, or creating PRs.
 
 ## Pull requests
 
-* Use the `gh` CLI. **Not installed by default** — uncomment the
-  GitHub CLI block in [`context/Dockerfile`](../../context/Dockerfile)
-  and rebuild the dev container, or install it on the host
-  (`brew install gh` or the official release).
-* Follow the repository's
-  [`pull_request_template.md`](../../.github/pull_request_template.md)
-  when creating PRs.
+* Use the `gh` CLI. **Not installed by default** — install it on the
+  host (`brew install gh` or the official release).
+* State the purpose, the changes, and the verification (`make test`,
+  `make all-lint`) in the PR body.
 * Do **not** force-push to shared branches without approval.
 
 ## Secret scanning (`gitleaks`)
 
-### Local scan
-
-* `make secret-scan [path]` scans the working tree using
-  [`.gitleaks-local.toml`](../../.gitleaks-local.toml). Default path
-  is `.`.
-
-### Pre-push hook
-
-* [`.githooks/pre-push`](../../.githooks/pre-push) runs `gitleaks git`
-  on every push.
-* `make setup-hooks` installs it; `context/entrypoint.sh` auto-installs
-  it on first dev container start.
-
-### CI
-
-* [`secret-scan.yaml`](../../.github/workflows/secret-scan.yaml) scans
-  on PR and on push to `main` / `develop`.
+* `make secret-scan [path]` runs `gitleaks dir --redact --verbose` on
+  the working tree. Default path is `.`.
+* `gitleaks` is not installed by default — install it on the host
+  (`brew install gitleaks`).
 
 ### Handling false positives
 
-Priority order:
-
-1. **Inline `# gitleaks:allow`** — most specific.
-2. **`.gitleaks.toml`** — structural rules shared by CI and local.
-   **Never** add path exclusions here; they would suppress CI
-   detection too.
-3. **`.gitleaks-local.toml`** — path exclusions used only by
-   `make secret-scan` (local scope, never by CI).
-4. **`.gitleaksignore`** — fingerprint-based, last resort (fragile
-   under squash merge).
+* Mark the line with an inline `# gitleaks:allow` comment.
+* If an inline comment is impossible, ask the user how to suppress the
+  finding before adding any config or ignore file.

@@ -74,14 +74,13 @@ cannot carry the full specification.
 
 * Keep exploration code under `experimentation/`.
 * Promote reusable preprocessing, feature engineering, and evaluation
-  logic into `project_module/` or `libs/`.
+  logic into `project_module/`.
 * Do not import from `experimentation/` in production / library code.
 
 ## Notebook discipline
 
 * Notebooks must run top-to-bottom without manual intervention.
-* **Do not commit cell outputs.** Use `make reset-notebook [path]` to
-  strip them before committing.
+* **Do not commit cell outputs.** Strip them before committing.
 * Do not import notebooks from production code.
 
 ## Traceability

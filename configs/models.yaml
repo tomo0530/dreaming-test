@@ -1,0 +1,15 @@
+# Azure Foundry deployments and prices (USD per 1M tokens, Global Standard, short context).
+# Source: Azure blog "GPT-6 in Microsoft Foundry" (2026-09-22) and Azure Retail Prices API.
+models:
+  gpt-6-luna:
+    deployment: gpt-6-luna
+    input_usd_per_m: 0.10
+    cached_input_usd_per_m: 0.01
+    output_usd_per_m: 0.50
+    kind: chat
+  text-embedding-3-large:
+    deployment: text-embedding-3-large
+    input_usd_per_m: 0.13
+    cached_input_usd_per_m: 0.13
+    output_usd_per_m: 0.0
+    kind: embedding

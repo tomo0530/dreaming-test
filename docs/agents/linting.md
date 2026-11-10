@@ -15,13 +15,12 @@ file. Apply these before committing or completing a task.
 
 ## Configuration
 
-* [`ruff.toml`](../../ruff.toml): line-length **100**, Python 3.10+,
+* [`ruff.toml`](../../ruff.toml): line-length **100**, Python 3.14,
   rules `E`, `W`, `F`, `B`, `I` enabled.
 * [`mypy.ini`](../../mypy.ini): strict mode
   (`disallow_untyped_defs`, `warn_return_any`,
-  `warn_unreachable`, etc.). Excludes: top-level `libs/` (anchored at
-  repo root — `project_module/libs/` is still checked) and any
-  `tests/` directory at any depth.
+  `warn_unreachable`, etc.). Excludes any `tests/` directory at any
+  depth.
 
 ## Verification order
 
@@ -35,10 +34,7 @@ Before committing or marking a task complete, verify in this order:
 Run all checks together with `make all-lint`. If formatting or lint
 checks fail, `make fix` auto-corrects both at once.
 
-## CI
+## Environment
 
-* [`lint.yaml`](../../.github/workflows/lint.yaml) runs `ruff` and
-  `mypy` against changed packages on PR `opened` / `synchronize` events
-  and on push to `main`.
-* If CI fails after a local pass, ensure your venv is in sync:
-  `uv sync --all-groups`.
+All commands run on the host through `uv run` (AGENTS.md §4). If a tool
+is missing or stale, sync the venv with `uv sync`.
