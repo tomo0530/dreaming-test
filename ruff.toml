@@ -25,6 +25,8 @@ exclude = [
     "node_modules",
     "venv",
     "__pycache__",
+    # The plan's code blocks are signature sketches with aligned comments, not code to format.
+    "docs/plan",
 ]
 
 [lint]

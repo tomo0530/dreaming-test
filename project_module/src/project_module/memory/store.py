@@ -2,6 +2,7 @@
 
 import re
 import shutil
+from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 
 MAX_GREP_MATCHES = 200
@@ -194,3 +195,11 @@ class MemoryStore:
         resolved = other.resolve()
         if resolved.is_relative_to(root) or root.is_relative_to(resolved):
             raise ValueError("snapshot directory must not overlap the store root")
+
+
+def markers_in_store(store: MemoryStore, markers: Sequence[str]) -> list[str]:
+    """The `markers` that occur verbatim on a line of any file in `store`, in the given order.
+
+    Used to tell whether an injected false note still survives in an arm's memory.
+    """
+    return [marker for marker in markers if store.grep(re.escape(marker), "**/*")]

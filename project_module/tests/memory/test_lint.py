@@ -53,6 +53,17 @@ def test_lint_wiki_index_may_list_files_by_path(tmp_path: Path) -> None:
     assert _lint(store) == []
 
 
+def test_lint_wiki_stub_sharing_a_stem_with_a_live_page_is_judged_by_path(
+    tmp_path: Path,
+) -> None:
+    store = _wiki(tmp_path)
+    store.write("notes/units.md", "MOVED TO [[units]]\n")
+    assert _lint(store) == []
+    store.write("_index.md", "- [[orders]] - o\n- [[units]] - u\n- notes/units.md - old\n")
+    problems = _lint(store)
+    assert len(problems) == 1 and "retired stub notes/units.md" in problems[0]
+
+
 def test_lint_wiki_stub_is_not_linted_for_frontmatter_but_its_target_must_exist(
     tmp_path: Path,
 ) -> None:

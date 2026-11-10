@@ -50,7 +50,9 @@ class RunData(BaseModel):
     costs: list[dict[str, Any]]
 
 
-class _JobStatus(BaseModel):
+class JobStatus(BaseModel):
+    """Content of a job's `status.json`, written by the runner."""
+
     status: RunStatus
     completed_sessions: int
 
@@ -137,7 +139,7 @@ def _discover_jobs(layout: RunLayout) -> list[tuple[str, str]]:
 def _read_status(path: Path) -> RunStatus:
     if not path.is_file():
         return "running"
-    return _parse(path, _JobStatus, path.read_text("utf-8")).status
+    return _parse(path, JobStatus, path.read_text("utf-8")).status
 
 
 def _read_rows[T: BaseModel](first_session_file: Path, model: type[T]) -> Iterator[T]:

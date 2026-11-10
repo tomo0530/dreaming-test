@@ -12,16 +12,12 @@ from project_module.agent.memory_arms import (
     VerifiedDreamingArm,
 )
 from project_module.config import Budgets, ConsolidationBudget, ExperimentConfig
-from project_module.consolidation import (
-    PhaseSpec,
-    prompt_values,
-    render_prompt,
-    run_consolidation,
-)
+from project_module.consolidation import PhaseSpec, prompt_values, run_consolidation
 from project_module.contracts import ChatResult
 from project_module.layout import RunLayout
 from project_module.memory.lint import lint_store
 from project_module.memory.store import MemoryStore
+from project_module.prompts import render_prompt
 from project_module.schemadrift.models import Fact, InjectedNote, Stream
 
 STREAM_ID = "s-test"

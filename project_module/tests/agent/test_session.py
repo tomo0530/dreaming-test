@@ -4,10 +4,11 @@ from typing import Any
 import pytest
 from fakes import FakeLLM, text_reply, tool_reply
 from project_module.agent.context import ArmContext
-from project_module.agent.session import CombinedToolSet, QueryTool, load_prompt, run_session
+from project_module.agent.session import CombinedToolSet, QueryTool, run_session
 from project_module.contracts import ChatResult, CostTag, ToolCall, ToolSet
 from project_module.llm.ledger import BudgetExceeded
 from project_module.memory.tools import MemoryReadTools
+from project_module.prompts import load_prompt
 from project_module.tokens import count_tokens
 
 from .fake_env import (

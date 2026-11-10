@@ -28,7 +28,8 @@ def lint_store(
     ``wiki`` expects frontmatter (`name` equal to the file stem, a `description`) on every page
     except `_index.md`, `injected.md` and `MOVED TO` stubs, `[[slug]]` links that resolve to a
     page of that stem, and an `_index.md` that lists every page except stubs and never lists a
-    stub. A page is listed when the index contains its `[[slug]]` or its relative path.
+    stub. A page is listed when the index contains its `[[slug]]` or its relative path; a stub
+    counts as listed by `[[slug]]` only when no live page has the same stem.
     ``summary`` expects `summary.md`. Both require `injected.md`, if present, to fit the limit.
     """
     match profile:
@@ -109,13 +110,18 @@ def _index_problems(pages: dict[str, str], stubs: set[str]) -> list[str]:
     index = pages.get(_INDEX)
     if index is None:
         return [f"{_INDEX} is missing"]
+    live_stems = {PurePosixPath(rel).stem for rel in pages if rel not in stubs}
     problems: list[str] = []
     for rel in sorted(pages):
         if rel in _SPECIAL_PAGES:
             continue
-        listed = f"[[{PurePosixPath(rel).stem}]]" in index or rel in index
-        if rel in stubs and listed:
-            problems.append(f"{_INDEX} lists the retired stub {rel}")
-        elif rel not in stubs and not listed:
+        stem = PurePosixPath(rel).stem
+        listed_by_link = f"[[{stem}]]" in index
+        if rel in stubs:
+            # `[[stem]]` names the live page when one shares the stem, so only the stub's own
+            # path, or a link no live page can answer, lists the stub.
+            if rel in index or (listed_by_link and stem not in live_stems):
+                problems.append(f"{_INDEX} lists the retired stub {rel}")
+        elif not (listed_by_link or rel in index):
             problems.append(f"{_INDEX} does not list {rel}")
     return problems

@@ -6,10 +6,7 @@ job's transcripts are mounted read-only as ``transcripts`` only for phases allow
 """
 
 import logging
-import re
-from collections.abc import Mapping, Sequence
-from importlib.resources import files
-from string import Template
+from collections.abc import Sequence
 from typing import Final, Literal
 
 from pydantic import BaseModel, Field
@@ -19,19 +16,15 @@ from project_module.config import ArmName, Budgets
 from project_module.contracts import ConsolidationRecord
 from project_module.llm.loop import run_tool_loop
 from project_module.memory.lint import lint_store
-from project_module.memory.store import MemoryStore
+from project_module.memory.store import MemoryStore, markers_in_store
 from project_module.memory.tools import FileToolset
+from project_module.prompts import render_prompt
 
 logger = logging.getLogger(__name__)
 
 MEMORY_MOUNT: Final = "memory"
 TRANSCRIPTS_MOUNT: Final = "transcripts"
 
-_PROMPTS_PACKAGE: Final = "project_module"
-_PROMPTS_DIR: Final = "prompts"
-# A prompt file may open with an HTML comment crediting its source; it is not sent to the model.
-_ATTRIBUTION: Final = re.compile(r"\A<!--.*?-->\s*", re.DOTALL)
-_ALL_FILES: Final = "**/*"
 # Conservative words-per-token ratio, so that a model writing to the word guide stays in budget.
 _WORDS_PER_TOKEN: Final = 0.6
 
@@ -69,26 +62,6 @@ def prompt_values(budgets: Budgets) -> dict[str, int]:
         "memory_read_tokens": budgets.online.memory_read_tokens,
         "max_output_tokens": budgets.consolidation.max_completion_tokens,
     }
-
-
-def render_prompt(prompt_files: Sequence[str], values: Mapping[str, object]) -> str:
-    """Join the packaged prompt files and fill their `$name` placeholders from `values`.
-
-    Raises
-    ------
-    FileNotFoundError
-        If a prompt file is not shipped with the package.
-    KeyError
-        If a placeholder has no value.
-    ValueError
-        If a prompt contains a `$` that does not start a placeholder.
-    """
-    prompts = files(_PROMPTS_PACKAGE).joinpath(_PROMPTS_DIR)
-    parts = [
-        _ATTRIBUTION.sub("", prompts.joinpath(name).read_text(encoding="utf-8")).strip()
-        for name in prompt_files
-    ]
-    return Template("\n\n".join(parts)).substitute(values)
 
 
 def run_consolidation(
@@ -186,7 +159,7 @@ def run_consolidation(
         output_tokens=output_tokens,
         stopped=";".join(stops),
         lint_problems=problems,
-        injected_markers_present=_markers_present(memory, markers),
+        injected_markers_present=markers_in_store(memory, markers),
     )
 
 
@@ -204,8 +177,3 @@ def _task_message(phase: PhaseSpec, *, session: int, transcript: str) -> str:
         "in plain text only when you are done, with one short paragraph on what you changed."
     )
     return "\n".join(lines)
-
-
-def _markers_present(store: MemoryStore, markers: Sequence[str]) -> list[str]:
-    """The `markers` that occur verbatim on a line of any file in `store`, in the given order."""
-    return [marker for marker in markers if store.grep(re.escape(marker), _ALL_FILES)]

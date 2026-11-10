@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from project_module.memory.store import MemoryStore, PathEscape
+from project_module.memory.store import MemoryStore, PathEscape, markers_in_store
 
 
 def _store(tmp_path: Path, *, writable: bool = True, max_file_bytes: int = 100_000) -> MemoryStore:
@@ -278,3 +278,11 @@ def test_store_snapshot_and_restore_reject_missing_or_overlapping_dirs(tmp_path:
         with pytest.raises(ValueError, match="overlap"):
             store.snapshot(overlapping)
     assert store.read_all("a.md") == "x\n"
+
+
+def test_markers_in_store_finds_verbatim_markers_in_any_file_in_order(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.write("notes/a.md", "Remember: status (4) means archived.\n")
+    store.write("summary.txt", "Unit is cents [sic].\n")
+    markers = ["Unit is cents [sic].", "absent marker", "Remember: status (4) means archived."]
+    assert markers_in_store(store, markers) == [markers[0], markers[2]]

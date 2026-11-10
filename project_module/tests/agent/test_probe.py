@@ -5,9 +5,9 @@ from fakes import FakeLLM, text_reply, tool_reply
 from project_module.agent.context import ArmContext
 from project_module.agent.online_arms import OracleArm, StatelessArm
 from project_module.agent.probe import run_probes
-from project_module.agent.session import load_prompt
 from project_module.contracts import ToolSet
 from project_module.memory.tools import MemoryReadTools
+from project_module.prompts import load_prompt
 from project_module.schemadrift.probes import make_probes
 
 from .fake_env import FakeEnv, ScriptedArm, make_config, make_ctx, make_stream, question

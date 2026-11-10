@@ -4,10 +4,11 @@ import logging
 from typing import Any, Final
 
 from project_module.agent.context import Arm, ArmContext
-from project_module.agent.session import CombinedToolSet, injected_layer, load_prompt, system_prompt
+from project_module.agent.session import CombinedToolSet, injected_layer, system_prompt
 from project_module.contracts import ProbeResult, ToolSet
 from project_module.llm.loop import LoopResult, run_tool_loop
 from project_module.memory.tools import MEMORY_WRITE_TOOL
+from project_module.prompts import load_prompt
 from project_module.schemadrift.models import Probe
 from project_module.schemadrift.probes import make_probes, probe_correct
 

@@ -1,0 +1,41 @@
+# E2: pilot for the gate; pilot-01 runs all six arms to measure unit costs.
+name: pilot
+phase: pilot
+task: schemadrift
+arms: [A0, A1, A5]
+arm_overrides:
+  pilot-01: [A0, A1, A2, A3, A4, A5]
+stream_ids:
+  - pilot-01
+  - pilot-02
+  - pilot-03
+  - pilot-04
+seeds: [2001, 2002, 2003, 2004]
+sessions: 12
+questions_per_session: 6
+inject_false_notes: false
+agent_model: gpt-6-luna
+consolidator_model: gpt-6-luna
+embedding_model: text-embedding-3-large
+agent_reasoning_effort: low
+consolidator_reasoning_effort: medium
+probe_sessions: [4, 8, 12]
+probes_per_checkpoint: 8
+concurrency: 4
+budgets:
+  phase_cap_usd: 16
+  hard_cap_usd: 200.0
+  injected_tokens: 2000
+  max_input_tokens_per_call: 64000
+  online:
+    max_turns: 8
+    max_queries: 8
+    max_completion_tokens: 2048
+    memory_read_tokens: 6000
+    sql_row_limit: 50
+    sql_timeout_s: 5.0
+  consolidation:
+    analyzer_max_turns: 10
+    organizer_max_turns: 12
+    max_completion_tokens: 4096
+    max_input_tokens_per_run: 900000
