@@ -7,14 +7,16 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel
 
 from project_module.contracts import CostTag, LLMClient, ToolCall, ToolSet
-from project_module.llm import INVALID_ARGUMENTS_KEY
+from project_module.llm import INVALID_ARGUMENTS_KEY, ContentFiltered
 from project_module.tokens import count_chat_tokens
 
 logger = logging.getLogger(__name__)
 
 ERROR_PREFIX: Final = "ERROR:"
 
-LoopStop = Literal["terminal", "final", "max_turns", "call_input_budget", "total_input_budget"]
+LoopStop = Literal[
+    "terminal", "final", "max_turns", "call_input_budget", "total_input_budget", "content_filter"
+]
 EventHandler = Callable[[str, dict[str, Any]], None]
 
 
@@ -110,14 +112,18 @@ def run_tool_loop(
         ):
             return _stop(result, "total_input_budget")
 
-        reply = client.chat(
-            model=model,
-            messages=messages,
-            tools=schemas or None,
-            reasoning_effort=reasoning_effort,
-            max_completion_tokens=max_completion_tokens,
-            tag=tag,
-        )
+        try:
+            reply = client.chat(
+                model=model,
+                messages=messages,
+                tools=schemas or None,
+                reasoning_effort=reasoning_effort,
+                max_completion_tokens=max_completion_tokens,
+                tag=tag,
+            )
+        except ContentFiltered:
+            logger.warning("Content filter blocked a %s call; stopping this loop", tag.component)
+            return _stop(result, "content_filter")
         result.turns += 1
         result.input_tokens += reply.usage.input_tokens
         result.output_tokens += reply.usage.output_tokens

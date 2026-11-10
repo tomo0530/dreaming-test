@@ -17,6 +17,7 @@ from tenacity import (
 
 from project_module.config import ModelSpec
 from project_module.contracts import ChatResult, ChatTransport, CostTag, Usage
+from project_module.llm import ContentFiltered
 from project_module.llm.ledger import CostLedger
 from project_module.tokens import count_chat_tokens, count_tokens
 
@@ -30,6 +31,14 @@ BACKOFF_MAX_S: Final = 60.0
 # The request may have reached the model and been billed, so its reservation is forfeited
 # and every retry reserves anew.
 _UNCERTAIN_ERRORS: Final = (openai.APIConnectionError, openai.InternalServerError)
+
+
+CONTENT_FILTER_RETRIES: Final = 1
+
+
+def _is_content_filter(exc: openai.APIStatusError) -> bool:
+    """Azure reports filtered prompts as a 400 with code `content_filter`."""
+    return getattr(exc, "code", None) == "content_filter" or "content management policy" in str(exc)
 
 
 class MeteredClient:
@@ -103,8 +112,12 @@ class MeteredClient:
         except _UNCERTAIN_ERRORS:
             self._ledger.forfeit(rid)
             raise
-        except openai.APIStatusError:
+        except openai.APIStatusError as exc:
             self._ledger.release(rid)
+            if _is_content_filter(exc):
+                raise ContentFiltered(
+                    f"request blocked by the content filter ({tag.component})"
+                ) from exc
             raise
         except BaseException:
             self._ledger.forfeit(rid)
@@ -139,7 +152,13 @@ class MeteredClient:
             max_output_tokens=max_output_tokens,
             tag=tag,
         )
-        return uncertain(attempt)
+        filtered = Retrying(
+            retry=retry_if_exception_type(ContentFiltered),
+            stop=stop_after_attempt(CONTENT_FILTER_RETRIES + 1),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        return filtered(lambda: uncertain(attempt))
 
     def chat(
         self,

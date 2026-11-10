@@ -215,3 +215,30 @@ def test_usage_returned_by_transport_is_what_gets_billed(tmp_path: Path) -> None
     _chat(client)
 
     assert ledger.spent_usd() == pytest.approx(0.01)
+
+
+def test_metered_retries_content_filter_once_then_raises(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    from project_module.llm import ContentFiltered
+
+    transport = FakeTransport()
+    error = openai.BadRequestError(
+        "filtered by the content management policy",
+        response=httpx2.Response(400, request=_REQUEST),
+        body={"code": "content_filter"},
+    )
+    mocker.patch.object(transport, "chat", side_effect=error)
+    ledger = CostLedger(tmp_path / "l.sqlite", phase="test", phase_cap_usd=1.0, hard_cap_usd=10.0)
+    client = MeteredClient(transport, ledger, MODELS, sleep=lambda _: None)
+    with pytest.raises(ContentFiltered):
+        client.chat(
+            model="luna",
+            messages=[{"role": "user", "content": "x"}],
+            tools=None,
+            reasoning_effort="low",
+            max_completion_tokens=10,
+            tag=make_tag(),
+        )
+    assert transport.chat.call_count == 2  # type: ignore[attr-defined]
+    assert ledger.spent_usd() == 0.0

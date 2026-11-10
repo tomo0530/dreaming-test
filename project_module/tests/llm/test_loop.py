@@ -217,3 +217,27 @@ def test_loop_reports_events_in_order() -> None:
 def test_loop_rejects_non_positive_max_turns() -> None:
     with pytest.raises(ValueError, match="max_turns must be at least 1"):
         _run(FakeLLM(), RecordingTools(), max_turns=0)
+
+
+def test_loop_stops_gracefully_on_content_filter() -> None:
+    from fakes import FakeLLM, make_tag
+    from project_module.llm import ContentFiltered
+
+    class _Filtered(FakeLLM):
+        def chat(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            raise ContentFiltered("blocked")
+
+    result = run_tool_loop(
+        _Filtered(),
+        model="m",
+        reasoning_effort="low",
+        system="s",
+        user="u",
+        tools=RecordingTools(),
+        max_turns=3,
+        max_completion_tokens=10,
+        max_input_tokens_per_call=10_000,
+        max_total_input_tokens=None,
+        tag=make_tag(),
+    )
+    assert (result.stopped, result.turns) == ("content_filter", 0)
