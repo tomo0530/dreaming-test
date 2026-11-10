@@ -50,3 +50,15 @@
 
 ### E3 main
 - 凍結直後に開始した run を約 30 秒で停止・破棄し、`concurrency` を 4 → 16 に変更して再開した（120 ジョブを並列度 4 で回すと約 13 時間かかる見込みだったため）。運用上の変更として事前登録 §5 に追記した。
+- 破棄した run: `main-20261110T161247Z`（台帳の実測で約 40 秒。上の「約 30 秒」と事前登録 §5 の値は概算、セッション 1 の途中で停止）。精算済みの費用 $0.0066 と未精算の予約 4 件がある。解析には使わない。
+- run `main-20261110T161346Z`（commit `7ef1204`、`git_dirty = false`）。開始 2026-11-10T16:13Z、終了 2026-11-10T19:14Z（UTC）。120 ジョブすべてが `completed`（12 セッション）。`failed`・`budget_exhausted` はなく、除外ストリームもない。
+- 費用: main は $7.89（台帳の `actual_usd`。破棄した run の $0.0066 を含む）。累計は $10.57（dev $0.65、pilot $0.97、pilot_inj $0.30、CL-Bench $0.75、test < $0.01）。未精算の予約が全 phase で forfeited 26 件（予約額 $0.070）、open 12 件（$0.018）あり、課金の有無は分からない。`metrics.json` の main の `run_total_usd`（$7.94）は、forfeited の予約額を保守的に含めた値である。
+- 照合: main の `stream.json` 20 本の SHA-256 は事前登録 §4 の値と一致した。`main.yaml` の SHA-256 は、事前登録 §5 の変更後の値と一致した。`outputs/main-run.log` には、エンドポイントのホスト名も URL も含まれていなかった。
+
+### E5 解析
+- `scripts/analyze.py --runs outputs/main-20261110T161346Z --out outputs/analysis/main` を実行した。CL-Bench も同様に解析し、`outputs/analysis/clbench` に出力した。`metrics.json` と図の複製は `docs/plan/artifacts/` に置いた。
+- 主比較: Δ = A4 − A1 = −0.011、95% CI [−0.042, +0.022]。判定は not_shown。詳細は `40_results.md` に記載した。
+- 事後の分析（事前登録外）:
+  - `scripts/supplementary_analysis.py`: 層別の正答率、SQL 実行数、ツール呼び出し数、Q_inj の内訳を出す。出力は `artifacts/main-supplementary.json`。
+  - transcript の読み取り専用診断（Opus サブエージェント）: 結果は `artifacts/main-diagnosis.md`。
+- R2 レビュー: Opus（xhigh）の指摘（ツール呼び出し数の二重計上、因果表現、偽メモ検出器の誤検出、CL-Bench の解釈など）を反映した。Codex gpt-6.1-sol の 1 回目は、標準入力を待ったまま止まったため停止し、修正後の版で実行し直した。その指摘（採点フィードバックについての表現、A3 の Q_inj 非正答 31 問、丸め、補助集計の除外処理と回帰テスト）を反映し、Opus は再確認で APPROVE とした。Codex の再確認で残った 1 件（回帰テストの追加）も反映し、テストが除外処理の欠落を検出することを確かめた。
