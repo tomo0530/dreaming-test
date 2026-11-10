@@ -1,10 +1,11 @@
 """Arms that keep a memory directory and consolidate it after each session: A1, A3 and A4.
 
-A1 (rolling summary) keeps `summary.md`, rewritten by one summarizer phase that reads the
-transcripts. A3 (organize-only) and A4 (verified dreaming) keep a wiki fed by the notes the
-online agent writes under `notes/`; A3 only organizes it, A4 first verifies it against the
-session's transcript. A1's single phase gets as many turns as A4's two phases together, and
-both share the same core prompt, input budget and reasoning effort.
+A1 (rolling summary) keeps `summary.md`: a review phase that reads the transcripts verifies,
+corrects and enriches it in place, then a rewrite phase without transcripts compacts it and
+rewrites `injected.md`. A3 (organize-only) and A4 (verified dreaming) keep a wiki fed by the
+notes the online agent writes under `notes/`; A3 only organizes it, A4 first verifies it
+against the session's transcript. A1's two phases mirror A4's analyzer and organizer: the same
+turns, transcript access, core prompt, input budget and reasoning effort.
 """
 
 import logging
@@ -16,6 +17,7 @@ from typing import Final
 from project_module.agent.context import Arm, ArmContext
 from project_module.config import ArmName, ConsolidationBudget
 from project_module.consolidation import (
+    INJECTED_FILE,
     LintProfile,
     PhaseSpec,
     require_memory,
@@ -28,12 +30,12 @@ from project_module.schemadrift.models import InjectedNote
 
 logger = logging.getLogger(__name__)
 
-INJECTED_FILE: Final = "injected.md"
 SUMMARY_FILE: Final = "summary.md"
 NOTES_PREFIX: Final = "notes/"
 
 CORE_PROMPT: Final = "_consolidation_core.md"
-SUMMARIZER_PROMPT: Final = "rolling_summarizer.md"
+REVIEW_PROMPT: Final = "rolling_review.md"
+REWRITE_PROMPT: Final = "rolling_rewrite.md"
 ANALYZER_PROMPT: Final = "analyzer_verify.md"
 ORGANIZER_PROMPT: Final = "organizer.md"
 
@@ -93,7 +95,7 @@ class _MemoryArm(Arm, ABC):
 
 
 class RollingSummaryArm(_MemoryArm):
-    """A1: a summarizer rewrites `summary.md` and `injected.md` from the transcripts."""
+    """A1: review `summary.md` against the transcript, then compact it and rewrite `injected.md`."""
 
     name: ArmName = "A1"
     lint_profile: LintProfile = "summary"
@@ -102,11 +104,17 @@ class RollingSummaryArm(_MemoryArm):
     def phases(self, budget: ConsolidationBudget) -> list[PhaseSpec]:
         return [
             PhaseSpec(
-                name="summarizer",
-                prompt_files=[CORE_PROMPT, SUMMARIZER_PROMPT],
-                max_turns=budget.summarizer_max_turns,
+                name="summarizer_review",
+                prompt_files=[CORE_PROMPT, REVIEW_PROMPT],
+                max_turns=budget.analyzer_max_turns,
                 transcripts_readable=True,
-            )
+            ),
+            PhaseSpec(
+                name="summarizer_rewrite",
+                prompt_files=[REWRITE_PROMPT],
+                max_turns=budget.organizer_max_turns,
+                transcripts_readable=False,
+            ),
         ]
 
     def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:

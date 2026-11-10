@@ -133,6 +133,7 @@ def make_stream(root: Path, facts: list[Fact] | None = None) -> Stream:
                 false_value="dollars",
                 text=f"orders.amount is stored in dollars. {MARKER}",
                 marker=MARKER,
+                claim_patterns=["orders.amount", "dollars"],
             ),
             InjectedNote(
                 after_session=7,
@@ -140,6 +141,7 @@ def make_stream(root: Path, facts: list[Fact] | None = None) -> Stream:
                 false_value="archived",
                 text=f"order_status 4 means archived. {OTHER_MARKER}",
                 marker=OTHER_MARKER,
+                claim_patterns=["order_status 4", "archived"],
             ),
         ],
     )

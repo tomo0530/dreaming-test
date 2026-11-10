@@ -6,13 +6,16 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel
 
-from project_module.contracts import CostTag, LLMClient, ToolCall, ToolSet
+from project_module.contracts import CostTag, LLMClient, ToolCall, ToolChoice, ToolSet
 from project_module.llm import INVALID_ARGUMENTS_KEY, ContentFiltered
 from project_module.tokens import count_chat_tokens
 
 logger = logging.getLogger(__name__)
 
 ERROR_PREFIX: Final = "ERROR:"
+# How much of unparseable tool arguments is echoed back; the rest only costs input tokens.
+RAW_ARGUMENTS_EXCERPT_CHARS: Final = 200
+LENGTH_NUDGE: Final = "Your reply was cut off by the output limit. Make smaller, targeted edits."
 
 LoopStop = Literal[
     "terminal", "final", "max_turns", "call_input_budget", "total_input_budget", "content_filter"
@@ -48,7 +51,17 @@ def _invalid_arguments_error(call: ToolCall) -> str | None:
     raw = call.arguments.get(INVALID_ARGUMENTS_KEY)
     if raw is None:
         return None
-    return f"{ERROR_PREFIX} arguments are not valid JSON objects: {raw}"
+    excerpt = str(raw)[:RAW_ARGUMENTS_EXCERPT_CHARS]
+    return f"{ERROR_PREFIX} arguments are not valid JSON objects: {excerpt}"
+
+
+def _forced_choice(terminal_tools: Sequence[dict[str, Any]]) -> ToolChoice:
+    if len(terminal_tools) != 1:
+        raise ValueError(
+            "force_terminal_on_last_turn needs exactly one terminal tool, "
+            f"got {len(terminal_tools)}"
+        )
+    return {"type": "function", "name": _tool_name(terminal_tools[0])}
 
 
 def run_tool_loop(
@@ -66,6 +79,7 @@ def run_tool_loop(
     max_total_input_tokens: int | None,
     tag: CostTag,
     on_event: EventHandler | None = None,
+    force_terminal_on_last_turn: bool = False,
 ) -> LoopResult:
     """Run one conversation until a terminal tool, a plain answer, or a budget stops it.
 
@@ -73,9 +87,13 @@ def run_tool_loop(
     without calling when that count exceeds `max_input_tokens_per_call`, or when billed input
     so far plus that count exceeds `max_total_input_tokens`. The tool calls of one reply are
     handled in order; a call to a terminal tool ends the loop and is returned unexecuted.
-    Calls whose arguments are not a JSON object get an `ERROR:` text instead of dispatch, and
-    a terminal call in that state does not end the loop. A reply cut off by
-    `finish_reason == "length"` without tool calls uses up its turn and the loop goes on.
+    Calls whose arguments are not a JSON object get an `ERROR:` text (quoting at most
+    `RAW_ARGUMENTS_EXCERPT_CHARS` characters of them) instead of dispatch, and a terminal call
+    in that state does not end the loop. A reply cut off by `finish_reason == "length"`
+    without tool calls uses up its turn and the loop goes on; when it has no text either, the
+    user turn `LENGTH_NUDGE` is added first so the next call does not repeat the same prompt.
+    With `force_terminal_on_last_turn` and a terminal tool, the last allowed call is sent
+    with a tool choice that forces that tool.
 
     Events passed to `on_event`: `("agent", {"text"})` for non-empty reply text,
     `("tool_call", {"name", "arguments"})` for every call including the terminal one, and
@@ -84,12 +102,16 @@ def run_tool_loop(
     Raises
     ------
     ValueError
-        If `max_turns` is less than 1.
+        If `max_turns` is less than 1, or `force_terminal_on_last_turn` is set while there
+        are several terminal tools.
     """
     if max_turns < 1:
         raise ValueError("max_turns must be at least 1")
     schemas = [*tools.schemas(), *terminal_tools]
     terminal_names = {_tool_name(schema) for schema in terminal_tools}
+    last_turn_choice = (
+        _forced_choice(terminal_tools) if force_terminal_on_last_turn and terminal_tools else None
+    )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -112,6 +134,7 @@ def run_tool_loop(
         ):
             return _stop(result, "total_input_budget")
 
+        last_turn = result.turns == max_turns - 1
         try:
             reply = client.chat(
                 model=model,
@@ -120,6 +143,7 @@ def run_tool_loop(
                 reasoning_effort=reasoning_effort,
                 max_completion_tokens=max_completion_tokens,
                 tag=tag,
+                tool_choice=last_turn_choice if last_turn else None,
             )
         except ContentFiltered:
             logger.warning("Content filter blocked a %s call; stopping this loop", tag.component)
@@ -135,6 +159,8 @@ def run_tool_loop(
         if not reply.tool_calls:
             if reply.finish_reason == "length":
                 logger.info("Reply cut off by max_completion_tokens (turn %d)", result.turns)
+                if not reply.content:
+                    messages.append({"role": "user", "content": LENGTH_NUDGE})
                 continue
             result.final_text = reply.content
             return _stop(result, "final")

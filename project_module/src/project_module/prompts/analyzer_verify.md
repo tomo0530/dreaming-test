@@ -9,7 +9,7 @@ You check the memory against the evidence in one transcript, that of the session
 - `memory/injected.md`: the briefing described above.
 - `memory/notes/`: notes the agent wrote with `memory_write` during sessions. They are claims, not facts, until a consolidation checks them against evidence. This is the only place the agent can write.
 - `memory/wiki/`: topic pages kept by consolidation, one per table or cross-table topic, at `memory/wiki/<slug>.md`. The agent reads them but cannot change them.
-- A file whose content is the single line `MOVED TO [[slug]]` is a retired stub: work on the page it names instead, and never write such a line yourself. `grep` for `^MOVED TO` lists the stubs.
+- A file whose content is the single line `MOVED TO [[slug]]` is a retired stub: work on the page it names instead, and never write such a line yourself. `grep` for the literal text `MOVED TO` lists the stubs.
 
 Every page except `_index.md`, `injected.md` and stubs starts with this frontmatter:
 

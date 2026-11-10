@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from openai import OpenAI, omit
 from openai.types.responses import Response
 
-from project_module.contracts import ChatResult, ToolCall, Usage
+from project_module.contracts import ChatResult, ToolCall, ToolChoice, Usage
 from project_module.llm import INVALID_ARGUMENTS_KEY
 
 ENDPOINT_ENV: Final = "AZURE_OPENAI_ENDPOINT"
@@ -52,6 +52,16 @@ def _to_response_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item["parameters"] = function.get("parameters", {"type": "object", "properties": {}})
         flat.append(item)
     return flat
+
+
+def _to_response_tool_choice(choice: ToolChoice) -> str | dict[str, Any]:
+    """Pass modes through; flatten a chat-style `{"type": "function", "function": {"name"}}`."""
+    if isinstance(choice, str):
+        return choice
+    function = choice.get("function")
+    if isinstance(function, dict):
+        return {"type": "function", "name": function["name"]}
+    return dict(choice)
 
 
 def _to_response_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -154,6 +164,7 @@ class FoundryTransport:
         tools: list[dict[str, Any]] | None,
         reasoning_effort: str,
         max_completion_tokens: int,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult:
         # `temperature` is never sent: reasoning deployments reject it. Reasoning items are
         # not carried between turns (store=False, stateless calls).
@@ -161,6 +172,11 @@ class FoundryTransport:
             model=model,
             input=cast(Any, _to_response_input(messages)),
             tools=cast(Any, _to_response_tools(tools)) if tools else omit,
+            tool_choice=(
+                cast(Any, _to_response_tool_choice(tool_choice))
+                if tool_choice is not None
+                else omit
+            ),
             reasoning=cast(Any, {"effort": reasoning_effort}),
             max_output_tokens=max_completion_tokens,
             store=False,

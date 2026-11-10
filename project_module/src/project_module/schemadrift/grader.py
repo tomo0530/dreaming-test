@@ -1,7 +1,6 @@
 """Execution-match grading with stale-answer detection for SchemaDrift-SQL."""
 
 import math
-from collections import defaultdict
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -42,34 +41,33 @@ def _rows_equal(a: list[Any], b: list[Any]) -> bool:
     return len(a) == len(b) and all(_cells_equal(x, y) for x, y in zip(a, b, strict=True))
 
 
-def _exact_part(row: list[Any]) -> tuple[Any, ...]:
-    """Everything in a row that compares exactly; numbers compare with a tolerance later."""
-    parts: list[Any] = [len(row)]
-    for cell in row:
-        if cell is None:
-            parts.append(("null",))
-        elif _is_number(cell):
-            parts.append(("number",))
-        elif isinstance(cell, str):
-            parts.append(("text", cell.strip().casefold()))
-        else:
-            parts.append(("other", repr(cell)))
-    return tuple(parts)
+_SIGNIFICANT_DIGITS = 9
+
+
+def _canonical_cell(cell: Any) -> tuple[int, Any]:
+    """A totally ordered key: NULL, then numbers (9 significant digits), text, anything else."""
+    if cell is None:
+        return (0, 0)
+    if _is_number(cell):
+        return (1, float(f"{float(cell):.{_SIGNIFICANT_DIGITS}g}"))
+    if isinstance(cell, str):
+        return (2, cell.strip().casefold())
+    return (3, repr(cell))
+
+
+def _canonical_row(row: list[Any]) -> tuple[tuple[int, Any], ...]:
+    return tuple(_canonical_cell(cell) for cell in row)
 
 
 def _multiset_equal(a: Rows, b: Rows) -> bool:
-    buckets: dict[tuple[Any, ...], list[list[Any]]] = defaultdict(list)
-    for row in b:
-        buckets[_exact_part(row)].append(row)
-    for row in a:
-        candidates = buckets.get(_exact_part(row))
-        if not candidates:
-            return False
-        match = next((i for i, other in enumerate(candidates) if _rows_equal(row, other)), None)
-        if match is None:
-            return False
-        candidates.pop(match)
-    return True
+    """Sort both sides by canonical row key, then compare pairwise with the tolerance.
+
+    Sorting makes the outcome independent of either side's row order.
+    """
+    return all(
+        _rows_equal(x, y)
+        for x, y in zip(sorted(a, key=_canonical_row), sorted(b, key=_canonical_row), strict=True)
+    )
 
 
 def results_equal(a: Rows, b: Rows, *, ordered: bool) -> bool:
@@ -83,7 +81,9 @@ def results_equal(a: Rows, b: Rows, *, ordered: bool) -> bool:
     a, b
         Result rows.
     ordered
-        Compare row by row in order; otherwise compare as multisets of rows.
+        Compare row by row in order; otherwise sort both sides by a canonical key
+        (numbers rounded to 9 significant digits, text stripped and casefolded) and
+        compare row by row, so the result never depends on either side's row order.
 
     Returns
     -------

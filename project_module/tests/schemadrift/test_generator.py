@@ -69,6 +69,21 @@ def test_generated_stream_has_the_designed_shape(tmp_path: Path) -> None:
     }
 
 
+def test_false_notes_are_declarative_and_carry_their_claim(tmp_path: Path) -> None:
+    stream = generate_stream("s", 23, tmp_path, inject=True)
+
+    for note in stream.injections:
+        fact = stream.fact(note.fact_id)
+        lowered = note.text.lower()
+        for imperative in ("whenever", "filter on", "always ", "make sure", "use "):
+            assert imperative not in lowered, imperative
+        assert note.claim_patterns == [note.claim_patterns[0], note.false_value]
+        assert note.claim_patterns[0] in fact.subject
+        claim_lines = [line for line in note.text.splitlines() if note.states_claim(line)]
+        assert len(claim_lines) == 2  # the rule line and the marker line
+        assert not note.states_claim(note.text.replace(note.false_value, fact.value))
+
+
 def test_load_stream_round_trips(tmp_path: Path) -> None:
     generated = generate_stream("s", 23, tmp_path, inject=True)
 

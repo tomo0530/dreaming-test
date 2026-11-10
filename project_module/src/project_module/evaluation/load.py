@@ -17,18 +17,15 @@ from project_module.contracts import (
     RunStatus,
 )
 from project_module.layout import RunLayout
+from project_module.llm.ledger import COMMITTED_USD_SQL
+from project_module.manifest import load_manifest
 
 logger = logging.getLogger(__name__)
 
-# Cost of a ledger row: settled rows cost what the model billed, released rows cost nothing,
-# and open or forfeited rows keep their reservation (the ledger counts them as spent).
-_COST_QUERY = """
+# Rows are priced exactly as the ledger counts them against its caps.
+_COST_QUERY = f"""
 SELECT phase, stream_id, arm, session, component, COUNT(*) AS calls,
-       SUM(CASE state
-               WHEN 'settled' THEN actual_usd
-               WHEN 'released' THEN 0.0
-               ELSE reserved_usd
-           END) AS cost_usd
+       SUM({COMMITTED_USD_SQL}) AS cost_usd
 FROM reservations
 WHERE run_id = ?
 GROUP BY phase, stream_id, arm, session, component
@@ -39,10 +36,12 @@ ORDER BY stream_id, arm, session, component
 class RunData(BaseModel):
     """Everything one run produced, flattened across jobs.
 
-    `status` is keyed by `job_key(stream_id, arm)`. Each entry of `costs` is one ledger
+    `status` is keyed by `job_key(stream_id, arm)`; `required_jobs` lists the keys of every
+    job the run's manifest asks for, started or not. Each entry of `costs` is one ledger
     aggregate with the keys phase, stream_id, arm, session, component, calls and cost_usd.
     """
 
+    required_jobs: list[str]
     results: list[QuestionResult]
     probes: list[ProbeResult]
     consolidations: list[ConsolidationRecord]
@@ -85,12 +84,24 @@ def load_run(run_dir: Path, ledger: Path) -> RunData:
 
     The ledger's `run_id` is the run directory's name. Rows are de-duplicated on
     (stream, arm, session, question or fact) with the last occurrence winning. A job directory
-    without a `status.json` has not finished a session yet and is reported as `running`.
+    without a `status.json` has not finished a session yet and is reported as `running`. The
+    required jobs come from the configuration in `manifest.json`.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the run directory, its manifest or the ledger does not exist.
     """
     if not run_dir.is_dir():
         raise FileNotFoundError(f"run directory not found: {run_dir}")
     if not ledger.is_file():
         raise FileNotFoundError(f"cost ledger not found: {ledger}")
+    config = load_manifest(run_dir).config
+    required_jobs = [
+        job_key(stream_id, arm)
+        for stream_id in config.stream_ids
+        for arm in config.arms_for(stream_id)
+    ]
 
     layout = RunLayout(run_dir)
     results: dict[tuple[str, str, int, str], QuestionResult] = {}
@@ -107,6 +118,7 @@ def load_run(run_dir: Path, ledger: Path) -> RunData:
             consolidations[(record.stream_id, record.arm, record.session)] = record
 
     data = RunData(
+        required_jobs=required_jobs,
         results=list(results.values()),
         probes=list(probes.values()),
         consolidations=list(consolidations.values()),

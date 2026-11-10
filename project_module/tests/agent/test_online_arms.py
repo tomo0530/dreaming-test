@@ -17,7 +17,12 @@ from project_module.transcript import TranscriptWriter
 from .fake_env import STREAM_ID, FakeEnv, make_config, make_ctx, make_stream, question
 
 NOTE = InjectedNote(
-    after_session=3, fact_id="f02", false_value="dollars", text="x", marker="MARKER-X"
+    after_session=3,
+    fact_id="f02",
+    false_value="dollars",
+    text="x",
+    marker="MARKER-X",
+    claim_patterns=["dollars"],
 )
 
 

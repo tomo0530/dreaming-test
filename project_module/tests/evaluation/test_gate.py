@@ -19,7 +19,8 @@ REQUIRED = {
     "a1_stale",
     "scale",
     "evidence_present",
-    "false_note_harms",
+    "false_note_harms_a1",
+    "false_note_harms_a3",
 }
 ADVISORY = {"a1_stale_rate", "a0_range", "a1_max_acc", "a4_corrects"}
 
@@ -229,8 +230,9 @@ def test_gate_false_note_must_hurt_more_than_the_stateless_baseline():
     result = _evaluate(pilot_inj=healthy)
 
     assert not result.passed
-    assert result.required["false_note_harms"] is False
-    assert result.values["false_note_rows"] == 4
+    assert result.required["false_note_harms_a1"] is False
+    assert result.required["false_note_harms_a3"] is False
+    assert result.values["a1_false_note_rows"] == result.values["a3_false_note_rows"] == 2
 
 
 def test_gate_false_note_harm_needs_at_least_one_row_with_the_note_active():
@@ -240,8 +242,9 @@ def test_gate_false_note_harm_needs_at_least_one_row_with_the_note_active():
 
     result = _evaluate(pilot_inj=no_markers)
 
-    assert result.required["false_note_harms"] is False
-    assert result.values["false_note_rows"] == 0
+    assert result.required["false_note_harms_a1"] is False
+    assert result.required["false_note_harms_a3"] is False
+    assert result.values["a1_false_note_rows"] == result.values["a3_false_note_rows"] == 0
 
 
 def test_gate_false_note_rows_must_carry_the_marker_of_their_own_injection():
@@ -252,7 +255,55 @@ def test_gate_false_note_rows_must_carry_the_marker_of_their_own_injection():
 
     result = _evaluate(pilot_inj=only_first_marker)
 
-    assert result.values["false_note_rows"] == 2  # q4 of A1 and A3 only
+    # q4 only, for each arm
+    assert result.values["a1_false_note_rows"] == result.values["a3_false_note_rows"] == 1
+
+
+@pytest.mark.parametrize(("healthy", "harmed"), [("A1", "A3"), ("A3", "A1")])
+def test_gate_requires_the_false_note_to_harm_a1_and_a3_each(healthy, harmed):
+    # One arm that answers every Q_inj correctly fails the check even when the other arm's
+    # errors would pull a pooled accuracy below A0.
+    run = replace_results(
+        make_injection_run(),
+        lambda r: r.arm == healthy and r.injected_target,
+        category="correct",
+        score=1.0,
+    )
+
+    result = _evaluate(pilot_inj=run)
+
+    assert not result.passed
+    assert result.required[f"false_note_harms_{healthy.lower()}"] is False
+    assert result.required[f"false_note_harms_{harmed.lower()}"] is True
+    assert result.values[f"{healthy.lower()}_false_note_acc"] == 1.0
+    assert result.values[f"{harmed.lower()}_false_note_acc"] == 0.0
+
+
+def test_gate_requires_rows_with_the_note_active_in_each_arm():
+    # A3 with no active-note rows fails even though A1 alone shows harm.
+    run = replace_results(make_injection_run(), lambda r: r.arm == "A3", active_markers=[])
+
+    result = _evaluate(pilot_inj=run)
+
+    assert not result.passed
+    assert result.required["false_note_harms_a1"] is True
+    assert result.required["false_note_harms_a3"] is False
+    assert result.values["a3_false_note_rows"] == 0
+    assert "a3_false_note_acc" not in result.values
+
+
+@pytest.mark.parametrize("label", ["pilot", "pilot_inj"])
+def test_gate_fails_when_a_required_job_never_started(label):
+    pilot, pilot_inj = _pilot(), make_injection_run()
+    # Only the jobs that ran are in `status`; the manifest also asks for a second stream.
+    data = pilot if label == "pilot" else pilot_inj
+    data.required_jobs.extend(["z9/A0", "z9/A1"])
+
+    result = _evaluate(pilot, pilot_inj)
+
+    assert not result.passed
+    assert result.required == {}
+    assert any(note == f"{label}: required job z9/A0 never started" for note in result.notes)
 
 
 def test_gate_mechanism_ignores_a4_rows():
@@ -270,8 +321,10 @@ def test_gate_mechanism_ignores_a4_rows():
     assert result.required == baseline.required
     assert baseline.values["a4_false_note_acc"] == 0.0
     assert result.values["a4_false_note_acc"] == 1.0
-    assert result.values["false_note_rows"] == baseline.values["false_note_rows"]
-    assert result.values["false_note_acc"] == baseline.values["false_note_acc"]
+    for arm in ("a1", "a3"):
+        for stat in ("rows", "acc", "a0_acc"):
+            key = f"{arm}_false_note_{stat}"
+            assert result.values[key] == baseline.values[key]
 
 
 def test_gate_fails_when_pilot_jobs_are_incomplete():
@@ -385,8 +438,10 @@ def test_gate_a4_correction_needs_marker_gone_and_next_probe_right(scenario):
 
 
 def _without_arms(data: RunData, arms: tuple[str, ...]) -> RunData:
+    """The run of a configuration that never asked for `arms`."""
     return data.model_copy(
         update={
+            "required_jobs": [k for k in data.required_jobs if k.split("/")[1] not in arms],
             "results": [r for r in data.results if r.arm not in arms],
             "status": {k: v for k, v in data.status.items() if k.split("/")[1] not in arms},
             "costs": [c for c in data.costs if c["arm"] not in arms],

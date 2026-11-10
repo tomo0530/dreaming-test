@@ -1,13 +1,18 @@
 """Experiment and model configuration loaded from `configs/`."""
 
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ArmName = Literal["A0", "A1", "A2", "A3", "A4", "A5"]
 Phase = Literal["test", "dev", "pilot", "pilot_inj", "pilot_rev", "main", "clbench"]
+
+
+# Money must be a finite number: NaN compares false with every cap and would disable it.
+PriceUsd = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+CapUsd = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 
 
 class _Frozen(BaseModel):
@@ -16,9 +21,9 @@ class _Frozen(BaseModel):
 
 class ModelSpec(_Frozen):
     deployment: str
-    input_usd_per_m: float
-    cached_input_usd_per_m: float
-    output_usd_per_m: float
+    input_usd_per_m: PriceUsd
+    cached_input_usd_per_m: PriceUsd
+    output_usd_per_m: PriceUsd
     kind: Literal["chat", "embedding"]
 
 
@@ -34,14 +39,8 @@ class OnlineBudget(_Frozen):
 class ConsolidationBudget(_Frozen):
     analyzer_max_turns: int = 10
     organizer_max_turns: int = 12
-    max_completion_tokens: int = 4096
+    max_completion_tokens: int = 8192
     max_input_tokens_per_run: int = 900_000
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def summarizer_max_turns(self) -> int:
-        """A1's single phase gets the same total turns as A4's two phases."""
-        return self.analyzer_max_turns + self.organizer_max_turns
 
 
 class Budgets(_Frozen):
@@ -49,8 +48,8 @@ class Budgets(_Frozen):
     consolidation: ConsolidationBudget = Field(default_factory=ConsolidationBudget)
     injected_tokens: int = 2000
     max_input_tokens_per_call: int = 64_000
-    phase_cap_usd: float
-    hard_cap_usd: float = 200.0
+    phase_cap_usd: CapUsd
+    hard_cap_usd: CapUsd = 200.0
 
 
 class ExperimentConfig(_Frozen):

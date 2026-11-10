@@ -4,11 +4,12 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Final
 
-from project_module.agent.context import Arm, ArmContext
+from project_module.agent.context import Arm, ArmContext, StopRequested
 from project_module.contracts import QuestionResult, TaskEnv, TaskQuestion, ToolCall, ToolSet
 from project_module.llm.loop import ERROR_PREFIX, LoopResult, run_tool_loop
-from project_module.memory.store import markers_in_store
+from project_module.memory.store import false_notes_present
 from project_module.prompts import load_prompt
+from project_module.schemadrift.models import InjectedNote
 from project_module.tokens import truncate_to_tokens
 from project_module.transcript import TranscriptWriter
 
@@ -165,10 +166,10 @@ def _solve(
     question: TaskQuestion,
     *,
     system: str,
-    markers: Sequence[str],
+    notes: Sequence[InjectedNote],
     writer: TranscriptWriter,
 ) -> QuestionResult:
-    active_markers = [] if ctx.memory is None else markers_in_store(ctx.memory, markers)
+    active_markers = [] if ctx.memory is None else false_notes_present(ctx.memory, notes)
     query_tool = QueryTool(ctx.env, question.session)
     arm_tools = arm.online_tools(ctx, question.session)
     tools = CombinedToolSet([query_tool] if arm_tools is None else [query_tool, arm_tools])
@@ -189,20 +190,33 @@ def _solve(
         max_total_input_tokens=None,
         tag=ctx.tag(arm.name, question.session, "online"),
         on_event=recorder.handle_event,
+        force_terminal_on_last_turn=True,
     )
     grade = ctx.env.grade(question, _submission(loop, ctx.env.submit_param), query_tool.attempts)
     feedback = ctx.env.feedback(question, grade)
     if feedback is not None:
         writer.event("feedback", feedback)
+    # Grades stay out of INFO logs: dev runs are tuned on mechanical signals only.
     logger.info(
-        "%s %s session %d %s: %s after %d turns (%s)",
+        "%s %s session %d %s: %d turns (%s), %d tool errors in %d calls, %d+%d tokens",
+        ctx.stream_id,
+        arm.name,
+        question.session,
+        question.qid,
+        loop.turns,
+        loop.stopped,
+        recorder.tool_errors,
+        recorder.tool_calls,
+        loop.input_tokens,
+        loop.output_tokens,
+    )
+    logger.debug(
+        "%s %s session %d %s graded %s",
         ctx.stream_id,
         arm.name,
         question.session,
         question.qid,
         grade.category,
-        loop.turns,
-        loop.stopped,
     )
     return QuestionResult(
         stream_id=ctx.stream_id,
@@ -233,12 +247,19 @@ def run_session(arm: Arm, ctx: ArmContext, session: int) -> list[QuestionResult]
     -------
     list[QuestionResult]
         One result per question, in question order.
+
+    Raises
+    ------
+    StopRequested
+        If the run's stop signal is set before a question starts.
     """
     system = system_prompt(load_prompt("agent_system.md"), injected_layer(arm, ctx, session))
-    markers = [note.marker for note in ctx.stream.injections] if ctx.stream is not None else []
+    notes = ctx.stream.injections if ctx.stream is not None else []
     transcript = ctx.layout.transcript_file(ctx.stream_id, arm.name, session)
+    results: list[QuestionResult] = []
     with TranscriptWriter(transcript, stream_id=ctx.stream_id, session=session) as writer:
-        return [
-            _solve(arm, ctx, question, system=system, markers=markers, writer=writer)
-            for question in ctx.env.questions_for(session)
-        ]
+        for question in ctx.env.questions_for(session):
+            if ctx.stop.is_set():
+                raise StopRequested(f"stop requested before {question.qid}")
+            results.append(_solve(arm, ctx, question, system=system, notes=notes, writer=writer))
+    return results

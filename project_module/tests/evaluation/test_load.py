@@ -1,8 +1,12 @@
 import json
 
 import pytest
+from fakes import make_tag
+from project_module.config import ModelSpec
+from project_module.contracts import Usage
 from project_module.evaluation.load import analyzable_streams, load_run
 from project_module.layout import RunLayout
+from project_module.llm.ledger import CostLedger
 
 from .builders import (
     make_consolidation,
@@ -11,6 +15,7 @@ from .builders import (
     make_run,
     write_jsonl,
     write_ledger,
+    write_run_manifest,
 )
 
 RUN_ID = "pilot-20261110T000000Z"
@@ -53,6 +58,7 @@ def _build_run_dir(tmp_path):
         [make_probe("s1", "A1", 1, "f1", correct=True, injected=False)],
     )
     _write_status(layout, "s1", "A1", "failed", 1)
+    write_run_manifest(run_dir, arms=["A0", "A1"], stream_ids=["s1", "s2"])
     return run_dir
 
 
@@ -71,6 +77,28 @@ def test_load_run_reads_every_stream_arm_and_session(tmp_path):
     assert [(p.arm, p.fact_id) for p in data.probes] == [("A1", "f1")]
     assert [(c.arm, c.session) for c in data.consolidations] == [("A1", 1)]
     assert data.status == {"s1/A0": "completed", "s1/A1": "failed"}
+    assert data.required_jobs == ["s1/A0", "s1/A1", "s2/A0", "s2/A1"]
+
+
+def test_load_run_takes_required_jobs_from_the_manifest_with_overrides(tmp_path):
+    run_dir = _build_run_dir(tmp_path)
+    write_run_manifest(
+        run_dir, arms=["A0", "A1"], stream_ids=["s1", "s2"], arm_overrides={"s2": ["A5"]}
+    )
+    write_ledger(tmp_path / "ledger.sqlite", _ledger_rows())
+
+    data = load_run(run_dir, tmp_path / "ledger.sqlite")
+
+    assert data.required_jobs == ["s1/A0", "s1/A1", "s2/A5"]
+
+
+def test_load_run_rejects_a_run_without_manifest(tmp_path):
+    run_dir = _build_run_dir(tmp_path)
+    (run_dir / "manifest.json").unlink()
+    write_ledger(tmp_path / "ledger.sqlite", _ledger_rows())
+
+    with pytest.raises(FileNotFoundError, match="manifest"):
+        load_run(run_dir, tmp_path / "ledger.sqlite")
 
 
 def test_load_run_deduplicates_rows(tmp_path):
@@ -204,3 +232,25 @@ def test_load_run_ignores_blank_lines(tmp_path):
     data = load_run(run_dir, tmp_path / "ledger.sqlite")
 
     assert len(data.results) == 4
+
+
+def test_load_run_costs_equal_the_real_ledger_committed_spend(tmp_path):
+    spec = ModelSpec(
+        deployment="m",
+        input_usd_per_m=1.0,
+        cached_input_usd_per_m=0.1,
+        output_usd_per_m=2.0,
+        kind="chat",
+    )
+    ledger_file = tmp_path / "ledger.sqlite"
+    ledger = CostLedger(ledger_file, phase="pilot", phase_cap_usd=10.0, hard_cap_usd=20.0)
+    tag = make_tag(phase="pilot", run_id=RUN_ID, stream_id="s1", arm="A0")
+    settled = ledger.reserve(spec, input_tokens=1000, max_output_tokens=500, tag=tag)
+    ledger.settle(settled, Usage(input_tokens=900, cached_input_tokens=100, output_tokens=200))
+    ledger.forfeit(ledger.reserve(spec, input_tokens=2000, max_output_tokens=100, tag=tag))
+    ledger.release(ledger.reserve(spec, input_tokens=3000, max_output_tokens=100, tag=tag))
+    ledger.reserve(spec, input_tokens=400, max_output_tokens=100, tag=tag)  # left open
+
+    data = load_run(_build_run_dir(tmp_path), ledger_file)
+
+    assert sum(c["cost_usd"] for c in data.costs) == pytest.approx(ledger.spent_usd(phase="pilot"))

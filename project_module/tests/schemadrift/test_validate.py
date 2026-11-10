@@ -118,6 +118,38 @@ def test_validate_detects_duplicate_markers(tmp_path: Path) -> None:
     assert "false-note markers are not unique" in problems
 
 
+def test_validate_requires_a_text_line_that_states_the_claim(tmp_path: Path) -> None:
+    stream = _generate(tmp_path)
+    first, second = stream.injections
+    changed = first.model_copy(update={"claim_patterns": ["a phrase the note never uses"]})
+
+    problems = validate_stream(stream.model_copy(update={"injections": [changed, second]}))
+
+    assert _has(problems, "after session 3", "no line of the text matches its claim patterns")
+
+
+def test_validate_refuses_claim_patterns_that_match_the_true_rule(tmp_path: Path) -> None:
+    stream = _generate(tmp_path)
+    first, second = stream.injections
+    term = first.claim_patterns[0]
+    changed = first.model_copy(update={"claim_patterns": [term]})
+
+    problems = validate_stream(stream.model_copy(update={"injections": [changed, second]}))
+
+    assert _has(problems, "after session 3", "claim patterns also match the true rule")
+
+
+def test_validate_refuses_a_code_pattern_that_session_tags_would_match(tmp_path: Path) -> None:
+    stream = _generate(tmp_path)
+    first, second = stream.injections
+    # A lower-case pattern ignores case, so the tag `(verified s5)` on a true line matches it.
+    changed = first.model_copy(update={"claim_patterns": [first.claim_patterns[0], "s5"]})
+
+    problems = validate_stream(stream.model_copy(update={"injections": [changed, second]}))
+
+    assert _has(problems, "after session 3", "claim patterns also match the true rule")
+
+
 def test_validate_detects_long_false_note(tmp_path: Path) -> None:
     stream = _generate(tmp_path)
     first, second = stream.injections

@@ -7,18 +7,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-# Pragmas that only describe the schema. Any other pragma is allowed only in its
-# argument-free (read) form, so `PRAGMA x = y` style writes are refused.
-_INTROSPECTION_PRAGMAS = frozenset(
-    {
-        "table_info",
-        "table_xinfo",
-        "table_list",
-        "index_list",
-        "index_info",
-        "index_xinfo",
-        "foreign_key_list",
-    }
+# The only pragmas allowed, as `PRAGMA x(...)` or as the `pragma_x(...)` table-valued
+# function (SQLite authorizes both as SQLITE_PRAGMA). They describe one table's schema; every
+# other pragma, such as `database_list` (file paths) or any setting, is refused.
+ALLOWED_PRAGMAS = frozenset(
+    {"table_info", "table_xinfo", "index_list", "index_info", "foreign_key_list"}
 )
 _ALLOWED_ACTIONS = frozenset(
     {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION, sqlite3.SQLITE_RECURSIVE}
@@ -43,10 +36,8 @@ def _authorize(
 ) -> int:
     if action in _ALLOWED_ACTIONS:
         return sqlite3.SQLITE_OK
-    if action == sqlite3.SQLITE_PRAGMA:
-        name = (arg1 or "").lower()
-        if name in _INTROSPECTION_PRAGMAS or arg2 is None:
-            return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_PRAGMA and (arg1 or "").lower() in ALLOWED_PRAGMAS:
+        return sqlite3.SQLITE_OK
     return sqlite3.SQLITE_DENY
 
 
@@ -58,8 +49,8 @@ def run_sql_readonly(db_path: Path, sql: str, *, row_limit: int, timeout_s: floa
     db_path
         SQLite file, opened with `mode=ro` so the file can never change.
     sql
-        A single statement. Writes, ATTACH/DETACH, transactions and pragma writes
-        are refused by an authorizer.
+        A single statement. Writes, ATTACH/DETACH, transactions and every pragma outside
+        `ALLOWED_PRAGMAS` are refused by an authorizer.
     row_limit
         Maximum rows returned; `truncated` tells whether more rows existed.
     timeout_s

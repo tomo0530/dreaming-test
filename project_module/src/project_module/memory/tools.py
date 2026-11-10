@@ -10,18 +10,22 @@ from typing import Any
 
 from project_module.contracts import ToolCall, ToolSet
 from project_module.memory.store import MAX_GREP_MATCHES, MemoryStore
-from project_module.tokens import count_tokens
-
-MEMORY_READ_TOOL = "memory_read"
-MEMORY_SEARCH_TOOL = "memory_search"
-MEMORY_WRITE_TOOL = "memory_write"
-# Tools whose results are memory content; transcripts must not record their bodies.
-MEMORY_CONTENT_TOOLS = frozenset({MEMORY_READ_TOOL, MEMORY_SEARCH_TOOL})
+from project_module.tokens import count_tokens, truncate_to_tokens
+from project_module.tool_names import MEMORY_READ_TOOL, MEMORY_SEARCH_TOOL, MEMORY_WRITE_TOOL
 
 NO_MATCHES = "(no matches)"
+# Largest single result of `read_file` and `memory_read`; longer reads are cut.
+MAX_READ_RESULT_TOKENS = 8_000
 _ALL_FILES = "**/*"
 _DEFAULT_LIMIT = 200
-_RAW_ARGUMENT_EXCERPT_CHARS = 200
+_READ_CUT_NOTICE = (
+    "[result cut at {limit} tokens: only the lines above were returned; read on with "
+    "`offset` {offset} and a smaller `limit` (200 lines or fewer)]"
+)
+_LONG_LINE_NOTICE = (
+    "[result cut at {limit} tokens: line {line} alone is longer than that and was cut; "
+    "read on with `offset` {offset}]"
+)
 
 _Handler = Callable[[dict[str, Any]], str]
 
@@ -57,10 +61,13 @@ _OFFSET = _integer(
     default=0,
     minimum=0,
 )
-_LIMIT = _integer("Maximum number of lines to return per call.", default=_DEFAULT_LIMIT, minimum=1)
-_REGEX_NOTE = (
-    "a regular expression (Python `re` syntax, case-sensitive; start with `(?i)` to ignore case)"
+_LIMIT = _integer(
+    "Maximum number of lines to return per call; use 200 or fewer. A result longer than "
+    f"{MAX_READ_RESULT_TOKENS} tokens is cut.",
+    default=_DEFAULT_LIMIT,
+    minimum=1,
 )
+_SEARCH_NOTE = "a piece of literal text (not a regular expression; case is ignored)"
 
 
 def _string_arg(arguments: dict[str, Any], name: str) -> str:
@@ -96,6 +103,38 @@ def _lines_or_none(lines: list[str]) -> str:
     return "\n".join(lines) if lines else NO_MATCHES
 
 
+def _read_capped(store: MemoryStore, rel: str, *, offset: int, limit: int) -> str:
+    """`store.read`, cut to whole lines that fit in `MAX_READ_RESULT_TOKENS` with a notice.
+
+    The notice names the `offset` to continue from. A first line that is too long on its own
+    is returned cut, and the notice points past it.
+    """
+    result = store.read(rel, offset=offset, limit=limit)
+    if count_tokens(result) <= MAX_READ_RESULT_TOKENS:
+        return result
+
+    def cut(lines: int) -> str:
+        notice = _READ_CUT_NOTICE.format(limit=MAX_READ_RESULT_TOKENS, offset=offset + lines)
+        return f"{store.read(rel, offset=offset, limit=lines)}\n{notice}"
+
+    # Invariant: `low` lines fit with the notice (or `low` is 0) and `high` lines do not.
+    low, high = 0, limit
+    while high - low > 1:
+        middle = (low + high) // 2
+        if count_tokens(cut(middle)) <= MAX_READ_RESULT_TOKENS:
+            low = middle
+        else:
+            high = middle
+    if low > 0:
+        return cut(low)
+    notice = _LONG_LINE_NOTICE.format(
+        limit=MAX_READ_RESULT_TOKENS, line=offset + 1, offset=offset + 1
+    )
+    first = store.read(rel, offset=offset, limit=1).split("\n", 1)[0]
+    room = MAX_READ_RESULT_TOKENS - count_tokens(notice) - 1
+    return f"{truncate_to_tokens(first, room)}\n{notice}"
+
+
 class _HandlerToolSet(ToolSet):
     """Dispatch by tool name to handlers that may raise; failures become ERROR text."""
 
@@ -110,9 +149,6 @@ class _HandlerToolSet(ToolSet):
         handler = self._handlers.get(call.name)
         if handler is None:
             return f"ERROR: unknown tool '{call.name}'"
-        if "__invalid__" in call.arguments:
-            raw = str(call.arguments["__invalid__"])[:_RAW_ARGUMENT_EXCERPT_CHARS]
-            return f"ERROR: the tool arguments are not valid JSON: {raw}"
         try:
             return handler(call.arguments)
         except (OSError, ValueError) as exc:
@@ -158,8 +194,8 @@ class FileToolset(_HandlerToolSet):
             _function(
                 "read_file",
                 "Read a text file and return its lines with 1-based line numbers, followed by "
-                "a final line `[lines a-b of N]`. Read long files in pages with `offset` and "
-                f"`limit`. {where}",
+                "a final line `[lines a-b of N]`. Read long files in pages of at most 200 lines "
+                f"with `offset` and `limit`. {where}",
                 {
                     "path": _string("File to read, e.g. `memory/notes/orders.md`."),
                     "offset": _OFFSET,
@@ -199,11 +235,11 @@ class FileToolset(_HandlerToolSet):
             ),
             _function(
                 "grep",
-                f"Search file contents for {_REGEX_NOTE}. Returns at most {MAX_GREP_MATCHES} "
-                "matching lines as `path:line: text`. Without `glob`, every file in every mount "
-                f"is searched. {where}",
+                f"Search file contents for {_SEARCH_NOTE}. Returns at most {MAX_GREP_MATCHES} "
+                "lines that contain it, as `path:line: text`. Without `glob`, every file in every "
+                f"mount is searched. {where}",
                 {
-                    "pattern": _string("The regular expression to search for."),
+                    "pattern": _string("The literal text to search for, e.g. `orders.status`."),
                     "glob": _string(
                         "Optional glob that limits the files searched and starts with a mount "
                         "name, e.g. `memory/notes/*.md`."
@@ -225,7 +261,7 @@ class FileToolset(_HandlerToolSet):
         _, store, rel = self._locate(_string_arg(arguments, "path"))
         offset = _int_arg(arguments, "offset", 0)
         limit = _int_arg(arguments, "limit", _DEFAULT_LIMIT)
-        return store.read(rel, offset=offset, limit=limit)
+        return _read_capped(store, rel, offset=offset, limit=limit)
 
     def _write_file(self, arguments: dict[str, Any]) -> str:
         path = _string_arg(arguments, "path")
@@ -326,9 +362,9 @@ class MemoryReadTools(_HandlerToolSet):
             ),
             _function(
                 MEMORY_SEARCH_TOOL,
-                f"Search all memory files for {_REGEX_NOTE}. Returns at most {MAX_GREP_MATCHES} "
-                f"matching lines as `path:line: text`. {budget}",
-                {"pattern": _string("The regular expression to search for.")},
+                f"Search all memory files for {_SEARCH_NOTE}. Returns at most {MAX_GREP_MATCHES} "
+                f"lines that contain it, as `path:line: text`. {budget}",
+                {"pattern": _string("The literal text to search for, e.g. a column name.")},
                 ["pattern"],
             ),
         ]
@@ -363,7 +399,7 @@ class MemoryReadTools(_HandlerToolSet):
         path = _string_arg(arguments, "path")
         offset = _int_arg(arguments, "offset", 0)
         limit = _int_arg(arguments, "limit", _DEFAULT_LIMIT)
-        return self._charge(self._store.read(path, offset=offset, limit=limit))
+        return self._charge(_read_capped(self._store, path, offset=offset, limit=limit))
 
     def _search(self, arguments: dict[str, Any]) -> str:
         pattern = _string_arg(arguments, "pattern")

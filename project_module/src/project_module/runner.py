@@ -7,24 +7,31 @@ the unfinished session and restoring the snapshot of the last completed one, so 
 never repeats the calls of a completed session and never holds a row twice.
 """
 
+import fcntl
 import logging
 import shutil
 import tempfile
-import threading
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
 from pydantic import BaseModel
 
-from project_module.agent.context import Arm, ArmContext
+from project_module.agent.context import Arm, ArmContext, StopRequested, StopSignal
 from project_module.agent.probe import run_probes
 from project_module.agent.registry import arm_spec, make_arm
 from project_module.agent.session import run_session
-from project_module.clbench import MANIFEST_NAME, CLBenchEnv
+from project_module.clbench import (
+    MANIFEST_NAME,
+    MAX_QUERIES,
+    MAX_RESULT_ROWS,
+    SQL_TIMEOUT_S,
+    CLBenchEnv,
+)
 from project_module.config import ArmName, ExperimentConfig, load_models
 from project_module.contracts import LLMClient, RunStatus, TaskEnv
 from project_module.evaluation.load import JobStatus, job_key
@@ -51,8 +58,14 @@ logger = logging.getLogger(__name__)
 
 _SNAPSHOT_MEMORY: Final = "memory"
 _SNAPSHOT_INDEX: Final = "index"
+# Held (flock) by the process running a run directory, so two processes never share one.
+RUN_LOCK_FILE: Final = ".run.lock"
 # Libraries that log request URLs, which would put the endpoint host in the logs.
 _URL_LOGGERS: Final = ("httpx", "httpcore", "openai")
+
+
+class RunLockedError(RuntimeError):
+    """Another process is running the same run directory."""
 
 
 class InvalidStreamError(ValueError):
@@ -156,7 +169,8 @@ def make_env(
     ------
     ValueError
         If the stream on disk does not match `config` (id, seed, sessions, questions per
-        session, or presence of false notes).
+        session, or presence of false notes), or a CL-Bench config states other query, row
+        or timeout limits than the CL-Bench adapter enforces.
     """
     if config.task == "clbench":
         env = CLBenchEnv(
@@ -164,6 +178,11 @@ def make_env(
         )
         _require_match(stream_id, "stream id", env.env_id, stream_id)
         _require_match(stream_id, "sessions", env.sessions, config.sessions)
+        # The adapter enforces CL-Bench's own limits; the config must state the same ones.
+        online = config.budgets.online
+        _require_match(stream_id, "max_queries", MAX_QUERIES, online.max_queries)
+        _require_match(stream_id, "sql_row_limit", MAX_RESULT_ROWS, online.sql_row_limit)
+        _require_match(stream_id, "sql_timeout_s", SQL_TIMEOUT_S, online.sql_timeout_s)
         return env, None
     stream = load_stream(streams_root / stream_id)
     _require_match(stream_id, "stream id", stream.stream_id, stream_id)
@@ -223,15 +242,17 @@ def run_stream_arm(
     layout: RunLayout,
     run_id: str,
     client: LLMClient,
-    stop: threading.Event,
+    stop: StopSignal,
 ) -> RunStatus:
     """Run, or resume, the sessions of `arm_name` on the stream of `env`.
 
     Each session runs the questions, injects the false notes due after it (when the config
     injects), lets the arm consolidate, asks the probes (SchemaDrift checkpoints only), then
     writes the session's rows, snapshots memory and index, and updates `status.json`. A
-    completed job returns at once. `stop` is checked when the job starts and before every
-    session; `BudgetExceeded` sets it. Any other exception fails the job and is logged.
+    completed job returns at once. `stop` is checked when the job starts, before every
+    session and before every question; a stopped job records the stop's reason as its status
+    and keeps only its completed sessions. `BudgetExceeded` requests a stop. Any other
+    exception fails the job and is logged.
     """
     stream_id = env.env_id
     previous = read_job_status(layout, stream_id, arm_name)
@@ -240,7 +261,7 @@ def run_stream_arm(
         return "completed"
     completed = 0 if previous is None else previous.completed_sessions
     if stop.is_set():
-        return _record_status(layout, stream_id, arm_name, "budget_exhausted", completed)
+        return _record_status(layout, stream_id, arm_name, stop.reason, completed)
     try:
         ctx = _prepare_job(
             config,
@@ -251,13 +272,14 @@ def run_stream_arm(
             run_id=run_id,
             client=client,
             completed=completed,
+            stop=stop,
         )
         arm = make_arm(arm_name)
         arm.setup(ctx)
         _record_status(layout, stream_id, arm_name, "running", completed)
         for session in range(completed + 1, env.sessions + 1):
             if stop.is_set():
-                return _record_status(layout, stream_id, arm_name, "budget_exhausted", completed)
+                return _record_status(layout, stream_id, arm_name, stop.reason, completed)
             _run_one_session(arm, ctx, session)
             completed = session
             _record_status(layout, stream_id, arm_name, "running", completed)
@@ -265,8 +287,11 @@ def run_stream_arm(
         logger.warning(
             "%s/%s: budget exhausted (%s); stopping all jobs", stream_id, arm_name, error
         )
-        stop.set()
+        stop.request("budget_exhausted")
         return _record_status(layout, stream_id, arm_name, "budget_exhausted", completed)
+    except StopRequested:
+        logger.info("%s/%s: stopped in session %d", stream_id, arm_name, completed + 1)
+        return _record_status(layout, stream_id, arm_name, stop.reason, completed)
     except Exception:
         logger.exception("%s/%s: job failed in session %d", stream_id, arm_name, completed + 1)
         return _record_status(layout, stream_id, arm_name, "failed", completed)
@@ -283,6 +308,7 @@ def _prepare_job(
     run_id: str,
     client: LLMClient,
     completed: int,
+    stop: StopSignal,
 ) -> ArmContext:
     """Discard every trace of unfinished sessions and rebuild the state after `completed`."""
     stream_id = env.env_id
@@ -319,6 +345,7 @@ def _prepare_job(
         memory=memory,
         transcripts=MemoryStore(layout.transcripts_dir(stream_id, arm_name), writable=False),
         index=index,
+        stop=stop,
     )
 
 
@@ -343,8 +370,18 @@ def _run_one_session(arm: Arm, ctx: ArmContext, session: int) -> None:
         ctx.memory.snapshot(snapshot / _SNAPSHOT_MEMORY)
     if ctx.index is not None:
         _replace_dir(snapshot / _SNAPSHOT_INDEX, layout.index_dir(stream_id, arm.name))
+    # Grades stay out of INFO logs: dev runs are tuned on mechanical signals only.
     logger.info(
-        "%s/%s: session %d done, %d/%d correct",
+        "%s/%s: session %d done, %d questions, %d tool errors in %d calls",
+        stream_id,
+        arm.name,
+        session,
+        len(results),
+        sum(result.tool_errors for result in results),
+        sum(result.tool_calls for result in results),
+    )
+    logger.debug(
+        "%s/%s: session %d, %d/%d correct",
         stream_id,
         arm.name,
         session,
@@ -390,13 +427,15 @@ def _record_status(
     return status
 
 
-def _mark_not_started(layout: RunLayout, stream_id: str, arm: ArmName) -> RunStatus:
-    """Record a job that is not started because the budget is exhausted, unless completed."""
+def _mark_not_started(
+    layout: RunLayout, stream_id: str, arm: ArmName, reason: RunStatus
+) -> RunStatus:
+    """Record a job that was never started because the run stopped, unless completed."""
     previous = read_job_status(layout, stream_id, arm)
     if previous is not None and previous.status == "completed":
         return "completed"
     completed = 0 if previous is None else previous.completed_sessions
-    return _record_status(layout, stream_id, arm, "budget_exhausted", completed)
+    return _record_status(layout, stream_id, arm, reason, completed)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +458,12 @@ def run_experiment(
     With `resume`, that run directory is continued: its manifest must match `config` and the
     stream files, and every job that is not completed (failed ones included) picks up after its
     last completed session. Jobs are submitted stream by stream; before each stream the runner
-    waits for a free worker and does not submit it once the budget is exhausted.
+    waits for a free worker and does not submit it once the run is stopping.
+
+    The process holds an exclusive lock on the run directory while it runs. On an interrupt
+    (Ctrl-C) or any other exception, every job is asked to stop before its next question,
+    jobs not yet started are cancelled and recorded as `interrupted`, and the exception is
+    re-raised once the running jobs have recorded their status.
 
     Every stream is loaded and checked against `config` before the run directory is created.
 
@@ -428,6 +472,8 @@ def run_experiment(
     ValueError
         If a stream does not match `config`, or `resume` was started with a different
         configuration or different stream files.
+    RunLockedError
+        If another process is running the same run directory.
     """
     inputs = {
         stream_id: file_sha256(_input_file(config, stream_id, streams_root, clbench_root))
@@ -437,27 +483,65 @@ def run_experiment(
         make_env(config, stream_id, seed, streams_root=streams_root, clbench_root=clbench_root)
         for stream_id, seed in zip(config.stream_ids, config.seeds, strict=True)
     ]
-    if resume is None:
-        run_dir = _start_run(config, out_root, inputs)
-    else:
-        _check_resumable(resume, config, inputs)
-        run_dir = resume
-    layout = RunLayout(run_dir)
-    run_id = run_dir.name
-    stop = threading.Event()
+    run_dir = _start_run(config, out_root, inputs) if resume is None else resume
+    with run_lock(run_dir):
+        if resume is not None:
+            _check_resumable(resume, config, inputs)
+        layout = RunLayout(run_dir)
+        statuses = _run_jobs(config, envs, layout=layout, run_id=run_dir.name, client=client)
+    logger.info("run %s finished: %s", run_dir.name, dict(Counter(statuses.values())))
+    return run_dir
+
+
+@contextmanager
+def run_lock(run_dir: Path) -> Iterator[None]:
+    """Hold an exclusive lock on `run_dir` for the duration of the block.
+
+    The lock is an `flock` on `RUN_LOCK_FILE`, so the operating system releases it when the
+    process dies, and a crashed run never blocks a later resume.
+
+    Raises
+    ------
+    RunLockedError
+        If another holder has the lock.
+    """
+    with (run_dir / RUN_LOCK_FILE).open("a", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RunLockedError(f"{run_dir} is being run by another process") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _run_jobs(
+    config: ExperimentConfig,
+    envs: Sequence[tuple[TaskEnv, Stream | None]],
+    *,
+    layout: RunLayout,
+    run_id: str,
+    client: LLMClient,
+) -> dict[str, RunStatus]:
+    stop = StopSignal()
     statuses: dict[str, RunStatus] = {}
-    with ThreadPoolExecutor(max_workers=config.concurrency) as pool:
-        pending: dict[Future[RunStatus], str] = {}
+    pending: dict[Future[RunStatus], tuple[str, ArmName]] = {}
+    submitted: dict[tuple[str, ArmName], Future[RunStatus]] = {}
+    pool = ThreadPoolExecutor(max_workers=config.concurrency)
+    try:
         for position, (stream_id, (env, stream)) in enumerate(
             zip(config.stream_ids, envs, strict=True)
         ):
             _wait_below(pending, config.concurrency, statuses)
             if stop.is_set():
                 remaining = config.stream_ids[position:]
-                logger.warning("budget exhausted; streams not started: %s", remaining)
+                logger.warning("run stopping (%s); streams not started: %s", stop.reason, remaining)
                 for skipped in remaining:
                     for arm in config.arms_for(skipped):
-                        statuses[job_key(skipped, arm)] = _mark_not_started(layout, skipped, arm)
+                        statuses[job_key(skipped, arm)] = _mark_not_started(
+                            layout, skipped, arm, stop.reason
+                        )
                 break
             for arm in config.arms_for(stream_id):
                 future = pool.submit(
@@ -471,10 +555,21 @@ def run_experiment(
                     client=client,
                     stop=stop,
                 )
-                pending[future] = job_key(stream_id, arm)
+                pending[future] = (stream_id, arm)
+                submitted[(stream_id, arm)] = future
         _wait_below(pending, 1, statuses)
-    logger.info("run %s finished: %s", run_id, dict(Counter(statuses.values())))
-    return run_dir
+    except BaseException:
+        logger.warning("run interrupted; asking every job to stop before its next question")
+        stop.request("interrupted")
+        pool.shutdown(wait=True, cancel_futures=True)
+        for stream_id in config.stream_ids:
+            for arm in config.arms_for(stream_id):
+                future = submitted.get((stream_id, arm))
+                if future is None or future.cancelled():
+                    _mark_not_started(layout, stream_id, arm, "interrupted")
+        raise
+    pool.shutdown()
+    return statuses
 
 
 def incomplete_jobs(config: ExperimentConfig, run_dir: Path) -> dict[str, RunStatus]:
@@ -490,13 +585,15 @@ def incomplete_jobs(config: ExperimentConfig, run_dir: Path) -> dict[str, RunSta
 
 
 def _wait_below(
-    pending: dict[Future[RunStatus], str], limit: int, statuses: dict[str, RunStatus]
+    pending: dict[Future[RunStatus], tuple[str, ArmName]],
+    limit: int,
+    statuses: dict[str, RunStatus],
 ) -> None:
     """Collect finished jobs until fewer than `limit` are pending."""
     while len(pending) >= limit and pending:
         done, _ = wait(pending, return_when=FIRST_COMPLETED)
         for future in done:
-            statuses[pending.pop(future)] = future.result()
+            statuses[job_key(*pending.pop(future))] = future.result()
 
 
 def _start_run(config: ExperimentConfig, out_root: Path, inputs: dict[str, str]) -> Path:

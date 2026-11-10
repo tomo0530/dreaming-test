@@ -1,9 +1,11 @@
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fakes import FakeLLM, text_reply, tool_reply
-from project_module.agent.context import ArmContext
+from project_module.agent.context import ArmContext, StopRequested
+from project_module.agent.online_arms import RawRagArm
 from project_module.agent.session import CombinedToolSet, QueryTool, run_session
 from project_module.contracts import ChatResult, CostTag, ToolCall, ToolSet
 from project_module.llm.ledger import BudgetExceeded
@@ -140,7 +142,7 @@ def test_session_transcript_has_no_grading_or_memory_content(tmp_path: Path) -> 
     assert result.category == "wrong_result"
     assert "USER: Total revenue of shipped orders?" in text
     assert 'TOOL CALL submit_sql: {"sql": "SELECT 2"}' in text
-    assert "[memory content omitted]" in text
+    assert "[retrieved content omitted]" in text
     for leaked in (
         "MEMORY-BODY-TEXT",
         "INJECTED-LAYER-TEXT",
@@ -260,3 +262,99 @@ def test_combined_toolset_reports_unknown_tool_as_error() -> None:
     tools = CombinedToolSet([])
 
     assert tools.dispatch(ToolCall(id="c", name="nope", arguments={})).startswith("ERROR:")
+
+
+def test_session_counts_a_reworded_false_claim_as_an_active_marker(tmp_path: Path) -> None:
+    ctx = make_ctx(
+        tmp_path,
+        client=FakeLLM([_submit()]),
+        env=FakeEnv([question("q1")]),
+        stream=make_stream(tmp_path / "stream"),
+    )
+    assert ctx.memory is not None
+    ctx.memory.write("notes/amount.md", "- ORDERS.AMOUNT holds dollars, not cents.\n")
+
+    [result] = run_session(ScriptedArm(tools=_memory_tools), ctx, 1)
+
+    assert result.active_markers == [MARKER]
+
+
+def test_session_stops_before_the_next_question_when_asked(tmp_path: Path) -> None:
+    env = FakeEnv([question("q1"), question("q2")])
+    client = FakeLLM([_submit(), _submit()])
+    ctx = make_ctx(tmp_path, client=client, env=env)
+    grade = env.grade
+
+    def grade_then_stop(*args: Any) -> Any:
+        ctx.stop.request("interrupted")
+        return grade(*args)
+
+    env.grade = grade_then_stop  # type: ignore[method-assign]
+
+    with pytest.raises(StopRequested):
+        run_session(ScriptedArm(), ctx, 1)
+
+    assert [qid for qid, _, _ in env.graded] == ["q1"]
+    assert len(client.calls) == 1
+
+
+def test_session_forces_the_submit_tool_on_the_last_turn(tmp_path: Path) -> None:
+    client = FakeLLM([_query("SELECT 1") for _ in range(5)] + [_submit()])
+    ctx = make_ctx(tmp_path, client=client, env=FakeEnv([question("q1")]))
+
+    [result] = run_session(ScriptedArm(), ctx, 1)
+
+    choices = [call["tool_choice"] for call in client.calls]
+    assert choices == [None] * 5 + [{"type": "function", "name": "submit_sql"}]
+    assert result.category == "correct"
+
+
+def test_session_info_logs_carry_no_grades(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    env = FakeEnv([question("q1"), question("q2")])
+    ctx = make_ctx(tmp_path, client=FakeLLM([_submit(), _submit("SELECT 2")]), env=env)
+
+    with caplog.at_level(logging.INFO, logger="project_module"):
+        run_session(ScriptedArm(), ctx, 1)
+
+    info = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.INFO)
+    assert "turns" in info and "tool errors" in info
+    for grade in ("correct", "wrong_result", "stale", "sql_error", "no_submission"):
+        assert grade not in info
+
+
+def test_a2_transcript_and_index_never_hold_retrieved_passages(tmp_path: Path) -> None:
+    retrieved = "PASSAGE-FROM-SESSION-ONE orders.amount is in cents"
+    env = FakeEnv([question("q1", 1), question("q2", 2)])
+    client = FakeLLM(
+        [
+            tool_reply(("query", {"sql": f"SELECT '{retrieved}'"})),
+            _submit(),
+            tool_reply(("search_transcripts", {"query": "PASSAGE-FROM-SESSION-ONE"})),
+            _submit(),
+        ]
+    )
+    env.run_query = lambda session, sql: sql  # type: ignore[method-assign]
+    ctx = make_ctx(tmp_path, client=client, env=env, arm="A2", with_index=True)
+    arm = RawRagArm()
+    run_session(arm, ctx, 1)
+    arm.after_session(ctx, 1)
+
+    run_session(arm, ctx, 2)
+    arm.after_session(ctx, 2)
+
+    search_result = client.calls[3]["messages"][-1]["content"]
+    assert retrieved in search_result  # the agent did see the passage
+    session_2 = _transcript(ctx, "A2", 2)
+    assert retrieved not in session_2
+    assert "TOOL RESULT (search_transcripts): [retrieved content omitted]" in session_2
+    assert ctx.index is not None
+    indexed = [
+        chunk.text
+        for chunk in ctx.index.search(
+            "PASSAGE-FROM-SESSION-ONE", k=50, token_budget=100_000, tag=client.tags[0]
+        )
+        if chunk.session == 2
+    ]
+    assert indexed and all(retrieved not in text for text in indexed)

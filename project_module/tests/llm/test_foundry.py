@@ -126,6 +126,43 @@ def test_foundry_transport_omits_temperature(mocker: MockerFixture) -> None:
     assert kwargs["store"] is False
 
 
+def test_foundry_transport_omits_tool_choice_by_default(mocker: MockerFixture) -> None:
+    transport, openai_cls = _transport_with(mocker, _response([_text("x")]))
+
+    _chat(transport)
+
+    assert openai_cls.return_value.responses.create.call_args.kwargs["tool_choice"] is omit
+
+
+@pytest.mark.parametrize(
+    ("choice", "sent"),
+    [
+        ({"type": "function", "name": "submit"}, {"type": "function", "name": "submit"}),
+        (
+            {"type": "function", "function": {"name": "submit"}},
+            {"type": "function", "name": "submit"},
+        ),
+        ("required", "required"),
+    ],
+    ids=["responses_form", "chat_form", "mode"],
+)
+def test_foundry_transport_sends_tool_choice_in_responses_form(
+    mocker: MockerFixture, choice: Any, sent: Any
+) -> None:
+    transport, openai_cls = _transport_with(mocker, _response([_text("x")]))
+
+    transport.chat(
+        model="gpt-6-luna",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "submit", "parameters": {}}}],
+        reasoning_effort="low",
+        max_completion_tokens=64,
+        tool_choice=choice,
+    )
+
+    assert openai_cls.return_value.responses.create.call_args.kwargs["tool_choice"] == sent
+
+
 def test_foundry_transport_maps_usage_with_cached_tokens(mocker: MockerFixture) -> None:
     transport, _ = _transport_with(mocker, _response([_text("answer")]))
 

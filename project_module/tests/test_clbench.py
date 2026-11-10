@@ -17,13 +17,18 @@ from project_module.clbench import (
     CLBENCH_DB_SIZES,
     CLBENCH_SHA,
     DRIFT_NOTICE,
+    MAX_QUERIES,
+    MAX_RESULT_ROWS,
+    SQL_TIMEOUT_S,
     CLBenchEnv,
     FileRecord,
     evaluate_answer,
     fetch_clbench,
     reward,
 )
+from project_module.config import Budgets, ExperimentConfig, OnlineBudget, load_experiment
 from project_module.contracts import Grade, TaskQuestion
+from project_module.runner import make_env
 
 from project_module import clbench
 
@@ -705,3 +710,60 @@ def test_fetch_clbench_rehashes_complete_databases_when_the_manifest_is_lost(tmp
         "size": 96,
         "sha256": _sha256(dest / "products_drifted.db"),
     }
+
+
+def _clbench_config(**online: Any) -> ExperimentConfig:
+    limits: dict[str, Any] = {"max_queries": 15, "sql_row_limit": 50, "sql_timeout_s": 10.0}
+    return ExperimentConfig(
+        name="clbench-test",
+        phase="test",
+        task="clbench",
+        arms=["A0"],
+        stream_ids=["clbench-r0"],
+        seeds=[0],
+        sessions=8,
+        questions_per_session=5,
+        inject_false_notes=False,
+        agent_model="m",
+        consolidator_model="m",
+        embedding_model="e",
+        probe_sessions=[],
+        budgets=Budgets(phase_cap_usd=1.0, online=OnlineBudget(**(limits | online))),
+    )
+
+
+def test_make_env_accepts_a_clbench_config_stating_the_adapter_limits(tmp_path):
+    env, stream = make_env(
+        _clbench_config(),
+        "clbench-r0",
+        0,
+        streams_root=tmp_path / "none",
+        clbench_root=_make_root(tmp_path),
+    )
+    assert stream is None and env.max_queries == MAX_QUERIES == 15
+
+
+@pytest.mark.parametrize(
+    "online", [{"max_queries": 8}, {"sql_row_limit": 20}, {"sql_timeout_s": 5.0}]
+)
+def test_make_env_refuses_clbench_limits_that_differ_from_the_adapter(tmp_path, online):
+    with pytest.raises(ValueError, match="clbench-r0"):
+        make_env(
+            _clbench_config(**online),
+            "clbench-r0",
+            0,
+            streams_root=tmp_path / "none",
+            clbench_root=_make_root(tmp_path),
+        )
+
+
+def test_clbench_experiment_config_matches_the_adapter_limits():
+    config = load_experiment(
+        Path(__file__).resolve().parents[2] / "configs/experiments/clbench.yaml"
+    )
+    online = config.budgets.online
+    assert (online.max_queries, online.sql_row_limit, online.sql_timeout_s) == (
+        MAX_QUERIES,
+        MAX_RESULT_ROWS,
+        SQL_TIMEOUT_S,
+    )

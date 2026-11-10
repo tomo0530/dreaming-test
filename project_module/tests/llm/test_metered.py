@@ -77,6 +77,24 @@ def test_chat_settles_usage_and_sends_deployment_name(tmp_path: Path) -> None:
     assert ledger.spent_usd() == pytest.approx(1_000 * 0.10e-6 + 200 * 0.50e-6)
 
 
+def test_chat_passes_tool_choice_to_the_transport(tmp_path: Path) -> None:
+    transport = FakeTransport([text_reply("hi")])
+    client, _, _ = _client(tmp_path, transport)
+    choice = {"type": "function", "name": "submit"}
+
+    client.chat(
+        model="luna",
+        messages=MESSAGES,
+        tools=None,
+        reasoning_effort="low",
+        max_completion_tokens=100,
+        tag=make_tag(),
+        tool_choice=choice,
+    )
+
+    assert transport.calls[0]["tool_choice"] == choice
+
+
 def test_chat_over_budget_is_not_sent(tmp_path: Path) -> None:
     transport = FakeTransport([text_reply("hi")])
     client, _, _ = _client(tmp_path, transport, phase_cap_usd=0.001)

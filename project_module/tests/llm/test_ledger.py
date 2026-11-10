@@ -121,6 +121,18 @@ def test_ledger_rejects_hard_cap_not_above_safety_margin(tmp_path: Path) -> None
         _ledger(tmp_path / "ledger.sqlite", hard_cap_usd=2.0)
 
 
+@pytest.mark.parametrize("cap", [float("nan"), float("inf"), 0.0, -1.0])
+def test_ledger_rejects_non_finite_or_non_positive_phase_cap(tmp_path: Path, cap: float) -> None:
+    with pytest.raises(ValueError, match="phase_cap_usd must be a finite positive number"):
+        _ledger(tmp_path / "ledger.sqlite", phase_cap_usd=cap)
+
+
+@pytest.mark.parametrize("cap", [float("nan"), float("inf")])
+def test_ledger_rejects_non_finite_hard_cap(tmp_path: Path, cap: float) -> None:
+    with pytest.raises(ValueError, match="hard_cap_usd must be a finite number"):
+        _ledger(tmp_path / "ledger.sqlite", hard_cap_usd=cap)
+
+
 def test_settle_replaces_reservation_with_actual(tmp_path: Path) -> None:
     path = tmp_path / "ledger.sqlite"
     ledger = _ledger(path)

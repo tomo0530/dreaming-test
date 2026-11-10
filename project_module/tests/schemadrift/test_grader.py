@@ -191,3 +191,28 @@ def test_results_equal_rules(
     a: list[list[Any]], b: list[list[Any]], ordered: bool, equal: bool
 ) -> None:
     assert results_equal(a, b, ordered=ordered) is equal
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ([[1.0000008], [1.0]], [[1.0], [1.0000016]]),
+        ([[None, "x"], [3, "Y"], [2.5, None]], [[2.5, None], [3.0, "y "], [None, "X"]]),
+        ([[1, "a"], [1, "b"], ["t", 2]], [["t", 2], [1, "b"], [1, "a"]]),
+    ],
+    ids=["reported-counterexample", "mixed-types-and-nulls", "mixed-column-types"],
+)
+def test_unordered_comparison_does_not_depend_on_row_order(
+    a: list[list[Any]], b: list[list[Any]]
+) -> None:
+    pairs = [(x, y) for x in (a, a[::-1]) for y in (b, b[::-1])]
+    outcomes = {results_equal(x, y, ordered=False) for x, y in pairs}
+    outcomes |= {results_equal(y, x, ordered=False) for x, y in pairs}
+    assert outcomes == {True}
+
+
+def test_unordered_comparison_is_symmetric_on_a_mismatch() -> None:
+    a, b = [[1.0], [2.0]], [[1.0], [2.1]]
+    assert {results_equal(x, y, ordered=False) for x in (a, a[::-1]) for y in (b, b[::-1])} == {
+        False
+    }

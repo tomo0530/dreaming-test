@@ -6,7 +6,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from project_module.config import ArmName
+from project_module.config import ArmName, Budgets, ExperimentConfig
 from project_module.contracts import (
     ConsolidationRecord,
     GradeCategory,
@@ -15,6 +15,8 @@ from project_module.contracts import (
     RunStatus,
 )
 from project_module.evaluation.load import RunData, job_key
+from project_module.layout import RunLayout
+from project_module.manifest import RunManifest, config_sha256, write_manifest
 from project_module.schemadrift.models import Fact, InjectedNote, Question, Stream
 
 LEDGER_SCHEMA = """
@@ -87,6 +89,8 @@ def make_consolidation(
     *,
     markers: Sequence[str] = (),
     lint_problems: Sequence[str] = (),
+    stopped: str = "final",
+    injected_updated: bool = True,
 ) -> ConsolidationRecord:
     return ConsolidationRecord(
         stream_id=stream_id,
@@ -96,9 +100,10 @@ def make_consolidation(
         turns=5,
         input_tokens=1000,
         output_tokens=100,
-        stopped="final",
+        stopped=stopped,
         lint_problems=list(lint_problems),
         injected_markers_present=list(markers),
+        injected_updated=injected_updated,
     )
 
 
@@ -123,11 +128,14 @@ def make_run(
     consolidations: Iterable[ConsolidationRecord] = (),
     status: Mapping[str, RunStatus] | None = None,
     costs: Iterable[dict[str, Any]] = (),
+    required_jobs: Iterable[str] | None = None,
 ) -> RunData:
+    """Run data; by default every job with results is required and completed."""
     result_list = list(results)
     if status is None:
         status = {job_key(r.stream_id, r.arm): "completed" for r in result_list}
     return RunData(
+        required_jobs=sorted(status) if required_jobs is None else list(required_jobs),
         results=result_list,
         probes=list(probes),
         consolidations=list(consolidations),
@@ -204,10 +212,20 @@ def make_injection_stream(stream_id: str = "i1") -> Stream:
     """
     notes = [
         InjectedNote(
-            after_session=3, fact_id="f1", false_value="9", text="note one", marker=MARK_1
+            after_session=3,
+            fact_id="f1",
+            false_value="9",
+            text="note one",
+            marker=MARK_1,
+            claim_patterns=["f1 is 9"],
         ),
         InjectedNote(
-            after_session=7, fact_id="f2", false_value="9", text="note two", marker=MARK_2
+            after_session=7,
+            fact_id="f2",
+            false_value="9",
+            text="note two",
+            marker=MARK_2,
+            claim_patterns=["f2 is 9"],
         ),
     ]
     return make_stream(
@@ -276,6 +294,42 @@ def make_injection_run(stream_id: str = "i1") -> RunData:
                 )
             )
     return make_run(results=results, consolidations=consolidations, probes=probes)
+
+
+def write_run_manifest(
+    run_dir: Path,
+    *,
+    arms: Sequence[ArmName],
+    stream_ids: Sequence[str],
+    arm_overrides: Mapping[str, list[ArmName]] | None = None,
+) -> None:
+    """Write the `manifest.json` of a pilot run that asked for `stream_ids` x `arms`."""
+    config = ExperimentConfig(
+        name="pilot",
+        phase="pilot",
+        arms=list(arms),
+        arm_overrides=dict(arm_overrides or {}),
+        stream_ids=list(stream_ids),
+        seeds=list(range(len(stream_ids))),
+        inject_false_notes=False,
+        agent_model="m",
+        consolidator_model="m",
+        embedding_model="e",
+        budgets=Budgets(phase_cap_usd=1.0),
+    )
+    write_manifest(
+        RunLayout(run_dir),
+        RunManifest(
+            run_id=run_dir.name,
+            phase="pilot",
+            created_utc="2026-11-10T00:00:00+00:00",
+            git_sha=None,
+            git_dirty=None,
+            config_sha256=config_sha256(config),
+            config=config,
+            input_sha256={},
+        ),
+    )
 
 
 def write_jsonl(path: Path, rows: Iterable[Any]) -> None:

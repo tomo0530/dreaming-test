@@ -3,7 +3,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from project_module.schemadrift.sql import SqlError, run_sql_readonly
+from project_module.schemadrift.sql import ALLOWED_PRAGMAS, SqlError, run_sql_readonly
 
 
 def _make_db(path: Path, rows: int = 2000) -> Path:
@@ -126,3 +126,36 @@ def test_run_sql_requires_a_positive_row_limit(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="row_limit"):
         run_sql_readonly(db, "SELECT 1", row_limit=0, timeout_s=5)
+
+
+@pytest.mark.parametrize("name", sorted(ALLOWED_PRAGMAS))
+@pytest.mark.parametrize("form", ["PRAGMA {name}('t')", "SELECT * FROM pragma_{name}('t')"])
+def test_run_sql_allows_each_allowlisted_pragma_in_both_forms(
+    tmp_path: Path, name: str, form: str
+) -> None:
+    db = _make_db(tmp_path / "db.sqlite", rows=3)
+
+    result = run_sql_readonly(db, form.format(name=name), row_limit=50, timeout_s=5)
+
+    assert not result.truncated
+
+
+@pytest.mark.parametrize(
+    "name", ["database_list", "compile_options", "user_version", "table_list", "function_list"]
+)
+@pytest.mark.parametrize("form", ["PRAGMA {name}", "SELECT * FROM pragma_{name}"])
+def test_run_sql_refuses_other_pragmas_in_both_forms(tmp_path: Path, name: str, form: str) -> None:
+    db = _make_db(tmp_path / "db.sqlite", rows=3)
+
+    with pytest.raises(SqlError):
+        run_sql_readonly(db, form.format(name=name), row_limit=50, timeout_s=5)
+
+
+def test_allowed_pragmas_are_exactly_the_schema_introspection_set() -> None:
+    assert ALLOWED_PRAGMAS == {
+        "table_info",
+        "table_xinfo",
+        "index_list",
+        "index_info",
+        "foreign_key_list",
+    }

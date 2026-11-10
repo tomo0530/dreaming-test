@@ -3,7 +3,7 @@
 import hashlib
 from typing import Any
 
-from project_module.contracts import ChatResult, CostTag, ToolCall, Usage
+from project_module.contracts import ChatResult, CostTag, ToolCall, ToolChoice, Usage
 
 
 def text_reply(text: str, *, input_tokens: int = 10, output_tokens: int = 5) -> ChatResult:
@@ -57,6 +57,7 @@ class FakeTransport:
         tools: list[dict[str, Any]] | None,
         reasoning_effort: str,
         max_completion_tokens: int,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult:
         self.calls.append(
             {
@@ -65,6 +66,7 @@ class FakeTransport:
                 "tools": tools,
                 "reasoning_effort": reasoning_effort,
                 "max_completion_tokens": max_completion_tokens,
+                "tool_choice": tool_choice,
             }
         )
         if not self.script:
@@ -96,6 +98,7 @@ class FakeLLM:
         reasoning_effort: str,
         max_completion_tokens: int,
         tag: CostTag,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult:
         self.tags.append(tag)
         return self.transport.chat(
@@ -104,6 +107,7 @@ class FakeLLM:
             tools=tools,
             reasoning_effort=reasoning_effort,
             max_completion_tokens=max_completion_tokens,
+            tool_choice=tool_choice,
         )
 
     def embed(self, *, model: str, texts: list[str], tag: CostTag) -> list[list[float]]:

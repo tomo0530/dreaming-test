@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from project_module.contracts import CostTag, LLMClient, ToolCall, ToolSet
 from project_module.llm.ledger import BudgetExceeded
 from project_module.tokens import count_tokens
+from project_module.tool_names import SEARCH_TRANSCRIPTS_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +48,6 @@ CREATE INDEX IF NOT EXISTS chunks_session ON chunks(session);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
     USING fts5(text, content='chunks', content_rowid='id');
 """
-
-SEARCH_TOOL_NAME = "search_transcripts"
 
 
 def rrf(rankings: list[list[str]], k: int = 60) -> list[str]:
@@ -311,7 +310,7 @@ def _search_tool_schema() -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
-            "name": SEARCH_TOOL_NAME,
+            "name": SEARCH_TRANSCRIPTS_TOOL,
             "description": (
                 "Search the raw logs of your earlier sessions (questions, your replies, SQL "
                 "queries and their results) for passages relevant to a query. Keyword and "
@@ -351,10 +350,8 @@ class TranscriptSearchTools(ToolSet):
         return [_search_tool_schema()]
 
     def dispatch(self, call: ToolCall) -> str:
-        if call.name != SEARCH_TOOL_NAME:
+        if call.name != SEARCH_TRANSCRIPTS_TOOL:
             return f"ERROR: unknown tool {call.name!r}."
-        if "__invalid__" in call.arguments:
-            return "ERROR: the tool arguments are not valid JSON."
         query = call.arguments.get("query")
         if not isinstance(query, str) or not query.strip():
             return "ERROR: 'query' must be a non-empty string."

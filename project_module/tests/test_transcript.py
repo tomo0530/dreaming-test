@@ -40,8 +40,8 @@ def test_transcript_format_truncation_and_memory_omission(tmp_path: Path) -> Non
         " 1\t2",
         "TOOL RESULT (query) [error]: no such column: prc_c",
         'TOOL CALL memory_read: {"path": "injected.md"}',
-        "TOOL RESULT (memory_read): [memory content omitted]",
-        "TOOL RESULT (memory_search): [memory content omitted]",
+        "TOOL RESULT (memory_read): [retrieved content omitted]",
+        "TOOL RESULT (memory_search): [retrieved content omitted]",
     ]
     assert lines[11:13] == [
         'TOOL CALL memory_write: {"path": "notes/a.md", "content": "x"}',
@@ -54,6 +54,18 @@ def test_transcript_format_truncation_and_memory_omission(tmp_path: Path) -> Non
     assert lines[64:] == ["EVENT feedback: Incorrect.", " Expected: 42"]
     text = path.read_text()
     assert "TOP SECRET" not in text and "FALSE NOTE" not in text
+
+
+def test_transcript_omits_transcript_search_results(tmp_path: Path) -> None:
+    writer, path = _writer(tmp_path)
+    writer.tool_call("search_transcripts", {"query": "orders"})
+    writer.tool_result("search_transcripts", "[session 1]\nRETRIEVED PASSAGE BODY")
+    writer.close()
+
+    lines = path.read_text().splitlines()
+
+    assert lines[-1] == "TOOL RESULT (search_transcripts): [retrieved content omitted]"
+    assert "RETRIEVED PASSAGE BODY" not in path.read_text()
 
 
 def test_transcript_keeps_memory_tool_errors_visible(tmp_path: Path) -> None:

@@ -35,8 +35,8 @@ _CATEGORIES: tuple[GradeCategory, ...] = get_args(GradeCategory)
 class NoteOutcome(BaseModel):
     """What happened to one injected false note in one arm of one stream.
 
-    `present_after[i]` says whether the marker was still in memory after the i-th consolidation
-    from the injection onward. `corrected` means that, when the next probe was taken, the marker
+    `present_after[i]` says whether the note (its marker or its reworded claim) was still in
+    memory after the i-th consolidation from the injection onward. `corrected` means that, when the next probe was taken, the marker
     was gone from memory and the probe on the injected fact was answered correctly.
     """
 
@@ -251,8 +251,8 @@ def _run_cost(data: RunData) -> dict[str, Any]:
 def mechanical_summary(data: RunData) -> dict[str, Any]:
     """Plumbing health for prompt tuning on dev streams; deliberately has no accuracy.
 
-    Tool-call success, no-submission rate, lint problems, consolidation stop reasons, job
-    statuses and costs only, overall and per arm.
+    Tool-call success, no-submission rate, lint problems, consolidation stop reasons, how
+    often consolidation changed `injected.md`, job statuses and costs only, overall and per arm.
     """
     arms = sorted(
         {r.arm for r in data.results}
@@ -268,6 +268,7 @@ def mechanical_summary(data: RunData) -> dict[str, Any]:
             "lint_problems": sum(len(c.lint_problems) for c in data.consolidations),
             "runs_with_lint_problems": sum(bool(c.lint_problems) for c in data.consolidations),
             "stopped": dict(Counter(c.stopped for c in data.consolidations)),
+            "injected_updated_rate": _injected_updated_rate(data.consolidations),
         },
         "cost_usd": {
             "total": sum(row["cost_usd"] for row in data.costs),
@@ -287,12 +288,19 @@ def _no_submission_rate(rows: Sequence[QuestionResult]) -> float | None:
     return _mean_or_none(float(r.category == "no_submission") for r in rows)
 
 
+def _injected_updated_rate(records: Sequence[ConsolidationRecord]) -> float | None:
+    return _mean_or_none(float(c.injected_updated) for c in records)
+
+
 def _mechanical_arm(data: RunData, arm: str) -> dict[str, Any]:
     rows = [r for r in data.results if r.arm == arm]
+    consolidations = [c for c in data.consolidations if c.arm == arm]
     return {
         "n_results": len(rows),
         "tool_call_success_rate": _tool_success_rate(rows),
         "no_submission_rate": _no_submission_rate(rows),
-        "lint_problems": sum(len(c.lint_problems) for c in data.consolidations if c.arm == arm),
+        "lint_problems": sum(len(c.lint_problems) for c in consolidations),
+        "consolidation_stopped": dict(Counter(c.stopped for c in consolidations)),
+        "injected_updated_rate": _injected_updated_rate(consolidations),
         "cost_usd": sum(row["cost_usd"] for row in data.costs if row["arm"] == arm),
     }

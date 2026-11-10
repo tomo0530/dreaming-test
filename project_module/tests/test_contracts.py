@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fakes import FakeTransport, text_reply
-from project_module.config import ConsolidationBudget, load_experiment, load_models
+from project_module.config import ConsolidationBudget, ModelSpec, load_experiment, load_models
 from project_module.layout import RunLayout, ledger_path
 from project_module.schemadrift.models import Fact, Stream
 from project_module.tokens import count_tokens, truncate_to_tokens
@@ -47,8 +47,41 @@ def test_phase_cap_is_required(tmp_path: Path) -> None:
         load_experiment(_write_config(tmp_path, budgets={}))
 
 
-def test_summarizer_turns_equal_analyzer_plus_organizer() -> None:
-    assert ConsolidationBudget().summarizer_max_turns == 22
+@pytest.mark.parametrize("value", [".nan", ".inf", "-.inf", 0, -1])
+@pytest.mark.parametrize("key", ["phase_cap_usd", "hard_cap_usd"])
+def test_budget_caps_must_be_finite_and_positive(tmp_path: Path, key: str, value: object) -> None:
+    budgets = {"phase_cap_usd": 1.0, key: value}
+    path = tmp_path / "cfg.yaml"
+    raw = yaml.safe_load(_write_config(tmp_path).read_text())
+    raw["budgets"] = budgets
+    # YAML's own spelling of NaN and infinity, as an experiment file would contain it.
+    path.write_text(yaml.safe_dump(raw).replace(f"'{value}'", str(value)))
+    with pytest.raises(ValidationError):
+        load_experiment(path)
+
+
+@pytest.mark.parametrize("price", [float("nan"), float("inf"), -0.01])
+@pytest.mark.parametrize("field", ["input_usd_per_m", "cached_input_usd_per_m", "output_usd_per_m"])
+def test_model_prices_must_be_finite_and_non_negative(field: str, price: float) -> None:
+    spec = {
+        "deployment": "d",
+        "input_usd_per_m": 1.0,
+        "cached_input_usd_per_m": 0.1,
+        "output_usd_per_m": 2.0,
+        "kind": "chat",
+        field: price,
+    }
+    with pytest.raises(ValidationError):
+        ModelSpec.model_validate(spec)
+
+
+def test_consolidator_output_limit_defaults_to_8192() -> None:
+    assert ConsolidationBudget().max_completion_tokens == 8192
+
+
+@pytest.mark.parametrize("path", sorted((REPO / "configs" / "experiments").glob("*.yaml")))
+def test_every_experiment_gives_consolidators_8192_output_tokens(path: Path) -> None:
+    assert load_experiment(path).budgets.consolidation.max_completion_tokens == 8192
 
 
 def test_load_models_reads_prices() -> None:

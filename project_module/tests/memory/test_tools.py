@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from project_module.contracts import ToolCall
 from project_module.memory.store import MemoryStore
-from project_module.memory.tools import FileToolset, MemoryReadTools
+from project_module.memory.tools import MAX_READ_RESULT_TOKENS, FileToolset, MemoryReadTools
 from project_module.tokens import count_tokens
 
 
@@ -95,7 +95,6 @@ def test_file_toolset_grep_searches_all_mounts_unless_glob_is_given(tmp_path: Pa
     ("name", "arguments"),
     [
         ("no_such_tool", {}),
-        ("read_file", {"__invalid__": '{"path": '}),
         ("read_file", {}),
         ("read_file", {"path": 5}),
         ("read_file", {"path": "memory/a.md", "offset": "1"}),
@@ -124,7 +123,7 @@ def test_file_toolset_grep_searches_all_mounts_unless_glob_is_given(tmp_path: Pa
         ("glob", {"pattern": "**/*.md"}),
         ("glob", {"pattern": "memory/../*"}),
         ("glob", {"pattern": "/etc/*"}),
-        ("grep", {"pattern": "(unclosed"}),
+        ("grep", {"pattern": ""}),
         ("grep", {"pattern": "x", "glob": "**/*.md"}),
         ("grep", {"pattern": "x", "glob": 5}),
         ("grep", {}),
@@ -153,8 +152,6 @@ def test_file_toolset_error_messages_explain_the_problem(tmp_path: Path) -> None
     assert "memory" in unknown_mount and "transcripts" in unknown_mount
     escape = tools.dispatch(_call("read_file", path="memory/../outside.md"))
     assert "escapes" in escape
-    invalid = tools.dispatch(_call("read_file", __invalid__="{broken"))
-    assert "JSON" in invalid
 
 
 def test_file_toolset_rejects_invalid_mount_names(tmp_path: Path) -> None:
@@ -207,8 +204,8 @@ def test_memory_read_and_search_use_paths_relative_to_the_memory_root(tmp_path: 
     assert tools.dispatch(_call("memory_search", pattern="nothing")) == "(no matches)"
     for bad in ["../x.md", "/etc/passwd", "missing.md"]:
         assert tools.dispatch(_call("memory_read", path=bad)).startswith("ERROR:")
-    assert tools.dispatch(_call("memory_read", __invalid__="{")).startswith("ERROR:")
-    assert tools.dispatch(_call("memory_search", pattern="(bad")).startswith("ERROR:")
+    assert tools.dispatch(_call("memory_search", pattern="")).startswith("ERROR:")
+    assert tools.dispatch(_call("memory_search", pattern="(bad")) == "(no matches)"
 
 
 def test_memory_read_tools_enforce_token_budget(tmp_path: Path) -> None:
@@ -299,3 +296,81 @@ def test_memory_read_tools_reject_prefix_on_read_only_store(tmp_path: Path) -> N
     store = MemoryStore(tmp_path / "memory", writable=False)
     with pytest.raises(ValueError, match="read-only"):
         MemoryReadTools(store, token_budget=10, writable_prefix="notes/")
+
+
+def test_file_toolset_grep_is_a_case_insensitive_literal_search(tmp_path: Path) -> None:
+    tools = _toolset(tmp_path)
+    tools.dispatch(
+        _call("write_file", path="memory/a.md", content="MOVED TO [[x]]\nOrders.Status (a+)+$\n")
+    )
+
+    assert tools.dispatch(_call("grep", pattern="moved to", glob="memory/*.md")) == (
+        "memory/a.md:1: MOVED TO [[x]]"
+    )
+    # Regular-expression syntax is plain text: no anchors, groups or quantifiers.
+    assert tools.dispatch(_call("grep", pattern="^MOVED TO", glob="memory/*.md")) == "(no matches)"
+    assert tools.dispatch(_call("grep", pattern="(a+)+$", glob="memory/*.md")) == (
+        "memory/a.md:2: Orders.Status (a+)+$"
+    )
+    assert tools.dispatch(_call("grep", pattern="orders.status", glob="memory/*.md")) == (
+        "memory/a.md:2: Orders.Status (a+)+$"
+    )
+
+
+def test_file_toolset_grep_handles_a_catastrophic_regex_pattern_quickly(tmp_path: Path) -> None:
+    tools = _toolset(tmp_path)
+    tools.dispatch(_call("write_file", path="memory/a.md", content="a" * 90_000 + "!\n"))
+
+    assert tools.dispatch(_call("grep", pattern="(a+)+$", glob="memory/*.md")) == "(no matches)"
+
+
+def _long_lines(count: int) -> str:
+    return "".join(f"line {i} " + "word " * 30 + "\n" for i in range(1, count + 1))
+
+
+def test_read_file_cuts_a_long_result_at_whole_lines_with_a_notice(tmp_path: Path) -> None:
+    tools = _toolset(tmp_path)
+    tools.dispatch(_call("write_file", path="memory/big.md", content=_long_lines(400)))
+
+    result = tools.dispatch(_call("read_file", path="memory/big.md", limit=400))
+
+    assert count_tokens(result) <= MAX_READ_RESULT_TOKENS
+    body, footer, notice = result.rsplit("\n", 2)
+    shown = int(footer.split("-")[1].split(" ")[0])
+    assert 0 < shown < 400
+    assert footer == f"[lines 1-{shown} of 400]"
+    assert body.split("\n")[-1].startswith(f"{shown}\tline {shown} ")
+    assert f"`offset` {shown}" in notice and "200 lines or fewer" in notice
+    resumed = tools.dispatch(_call("read_file", path="memory/big.md", offset=shown, limit=1))
+    assert resumed.startswith(f"{shown + 1}\tline {shown + 1} ")
+
+
+def test_read_file_cuts_a_single_overlong_line(tmp_path: Path) -> None:
+    tools = _toolset(tmp_path)
+    tools.dispatch(_call("write_file", path="memory/wide.md", content="w " * 30_000 + "\nnext\n"))
+
+    result = tools.dispatch(_call("read_file", path="memory/wide.md"))
+
+    assert count_tokens(result) <= MAX_READ_RESULT_TOKENS
+    assert result.startswith("1\tw w ")
+    assert result.endswith("read on with `offset` 1]")
+
+
+def test_read_file_leaves_a_result_within_the_cap_untouched(tmp_path: Path) -> None:
+    tools = _toolset(tmp_path)
+    tools.dispatch(_call("write_file", path="memory/small.md", content=_long_lines(3)))
+
+    result = tools.dispatch(_call("read_file", path="memory/small.md"))
+
+    assert result.endswith("[lines 1-3 of 3]")
+
+
+def test_memory_read_is_cut_at_the_cap_and_charged_for_what_it_returns(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "m", writable=True)
+    store.write("big.md", _long_lines(400))
+    tools = MemoryReadTools(store, token_budget=50_000, writable_prefix=None)
+
+    result = tools.dispatch(_call("memory_read", path="big.md", limit=400))
+
+    assert count_tokens(result) <= MAX_READ_RESULT_TOKENS
+    assert "`offset`" in result

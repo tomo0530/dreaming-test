@@ -1,7 +1,9 @@
 """Memory probes: short-answer questions on the rules that hold at a checkpoint."""
 
 import random
+import re
 from collections.abc import Mapping
+from typing import Final
 
 from project_module.schemadrift.generator import TIME_FORMAT_LABELS
 from project_module.schemadrift.models import Fact, FactKind, Probe, Stream
@@ -91,8 +93,17 @@ def make_probes(stream: Stream, session: int, n: int) -> list[Probe]:
     return [_probe(f, injected=f.fact_id in written) for f in chosen]
 
 
+# Characters an answer may be wrapped in without changing it: `K4`, "K4", K4.
+_WRAPPING: Final = " \t\r\n`'\".,;:"
+_WHITESPACE: Final = re.compile(r"\s+")
+# Spaces around a comparison operator carry no meaning; the operator itself does.
+_OPERATOR: Final = re.compile(r" ?(!=|<>|<=|>=|==|=|<|>) ?")
+
+
 def _normalize(text: str) -> str:
-    return "".join(ch for ch in text.casefold() if ch.isalnum())
+    """Casefold, trim wrapping punctuation and collapse whitespace; keep every operator."""
+    collapsed = _WHITESPACE.sub(" ", text.casefold().strip(_WRAPPING))
+    return _OPERATOR.sub(r"\1", collapsed)
 
 
 def probe_correct(probe: Probe, answer: str) -> bool:
@@ -108,8 +119,10 @@ def probe_correct(probe: Probe, answer: str) -> bool:
     Returns
     -------
     bool
-        True when `answer` equals the answer or an alias after casefolding and
-        dropping every character that is not a letter or digit.
+        True when `answer` equals the answer or an alias after casefolding, trimming
+        surrounding quotes, backticks and trailing punctuation, collapsing whitespace and
+        dropping the spaces around comparison operators. Operators and words such as `not`
+        are compared as written, so `x != 1` never matches `x = 1`.
     """
     given = _normalize(answer)
     return bool(given) and given in {_normalize(a) for a in [probe.answer, *probe.aliases]}

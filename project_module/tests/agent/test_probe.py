@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -95,3 +96,32 @@ def test_probe_uses_configured_count_and_truncated_layer(tmp_path: Path) -> None
     assert len(results) == ctx.config.probes_per_checkpoint
     assert all(not r.correct for r in results)
     assert "[truncated]" in client.calls[0]["messages"][0]["content"]
+
+
+def test_probe_forces_the_answer_tool_on_the_last_turn(tmp_path: Path) -> None:
+    stream = make_stream(tmp_path / "stream")
+    turns = make_config().budgets.online.max_turns
+    script = [tool_reply(("memory_search", {"pattern": "x"})) for _ in range(turns - 1)]
+    client = FakeLLM([*script, tool_reply(("answer", {"answer": "x"}))])
+    ctx = make_ctx(tmp_path, client=client, env=FakeEnv([question("q1")]), arm="A5", stream=stream)
+    config = ctx.config.model_copy(update={"probes_per_checkpoint": 1})
+    ctx.config = config
+
+    run_probes(OracleArm(), ctx, 4)
+
+    assert [call["tool_choice"] for call in client.calls] == [None] * (turns - 1) + [
+        {"type": "function", "name": "answer"}
+    ]
+
+
+def test_probe_info_logs_carry_no_scores(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    stream = make_stream(tmp_path / "stream")
+    client = FakeLLM([tool_reply(("answer", {"answer": "x"})) for _ in range(2)])
+    ctx = make_ctx(tmp_path, client=client, env=FakeEnv([question("q1")]), arm="A5", stream=stream)
+
+    with caplog.at_level(logging.INFO, logger="project_module"):
+        run_probes(OracleArm(), ctx, 4)
+
+    info = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.INFO)
+    assert "probes asked" in info
+    assert "correct" not in info

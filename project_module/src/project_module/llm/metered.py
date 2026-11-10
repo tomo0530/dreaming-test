@@ -16,7 +16,7 @@ from tenacity import (
 )
 
 from project_module.config import ModelSpec
-from project_module.contracts import ChatResult, ChatTransport, CostTag, Usage
+from project_module.contracts import ChatResult, ChatTransport, CostTag, ToolChoice, Usage
 from project_module.llm import ContentFiltered
 from project_module.llm.ledger import CostLedger
 from project_module.tokens import count_chat_tokens, count_tokens
@@ -169,6 +169,7 @@ class MeteredClient:
         reasoning_effort: str,
         max_completion_tokens: int,
         tag: CostTag,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult:
         spec = self._spec(model, "chat")
         send = partial(
@@ -178,6 +179,7 @@ class MeteredClient:
             tools=tools,
             reasoning_effort=reasoning_effort,
             max_completion_tokens=max_completion_tokens,
+            tool_choice=tool_choice,
         )
         return self._metered(
             send,

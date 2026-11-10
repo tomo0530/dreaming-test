@@ -150,9 +150,13 @@ def _check_note(stream: Stream, note: InjectedNote, facts: dict[str, Fact]) -> l
         problems.append(f"{label}: text exceeds {MAX_NOTE_TOKENS} tokens")
     if note.marker not in note.text:
         problems.append(f"{label}: marker is not part of the text")
+    if not any(note.states_claim(line) for line in note.text.splitlines()):
+        problems.append(f"{label}: no line of the text matches its claim patterns")
     fact = facts.get(note.fact_id)
     if fact is None:
         return problems + [f"{label}: unknown fact {note.fact_id}"]
+    if any(note.states_claim(line) for line in _true_statements(stream, note, fact)):
+        problems.append(f"{label}: its claim patterns also match the true rule")
     if not fact.leaf:
         problems.append(f"{label}: fact {fact.fact_id} is not a leaf rule")
     window = range(after + 1, after + INJECTION_WINDOW + 1)
@@ -187,6 +191,21 @@ def _check_note(stream: Stream, note: InjectedNote, facts: dict[str, Fact]) -> l
         if not after <= q.session <= window[-1]
     ]
     return problems
+
+
+def _true_statements(stream: Stream, note: InjectedNote, fact: Fact) -> list[str]:
+    """Lines that state the true rule, as the note would and as memory tags them.
+
+    Consolidation tags facts with `(verified sN)` and history with `sA-sB`, so a claim
+    pattern such as a code `S5` must not match those tags on a true line either.
+    """
+    corrected = note.text.replace(note.false_value, fact.value).splitlines()
+    plain = f"{fact.subject}: {fact.value}"
+    tagged = [
+        f"{plain} (verified s{session}); was {fact.value} in s1-s{session}"
+        for session in range(1, stream.sessions + 1)
+    ]
+    return [*corrected, plain, f"{plain} (unverified)", *tagged]
 
 
 def _check_injections(stream: Stream, facts: dict[str, Fact]) -> list[str]:

@@ -7,7 +7,7 @@ from typing import Any, get_args
 import pytest
 from fakes import FakeTransport, text_reply, tool_reply
 from project_module.config import ArmName, Budgets, ExperimentConfig, load_models
-from project_module.contracts import ChatResult
+from project_module.contracts import ChatResult, ToolChoice
 from project_module.evaluation.load import load_run
 from project_module.evaluation.report import analyze_runs, load_streams, run_gate
 from project_module.evaluation.summary import summarize_run
@@ -41,6 +41,7 @@ class PolicyTransport(FakeTransport):
         tools: list[dict[str, Any]] | None,
         reasoning_effort: str,
         max_completion_tokens: int,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult:
         self.calls.append({"model": model, "tools": tools, "reasoning_effort": reasoning_effort})
         names = {tool["function"]["name"] for tool in tools or []}

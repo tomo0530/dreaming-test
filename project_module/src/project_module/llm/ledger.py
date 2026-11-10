@@ -5,6 +5,7 @@ reservation are atomic across threads and processes that share the SQLite file.
 """
 
 import logging
+import math
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -57,9 +58,10 @@ CREATE TABLE IF NOT EXISTS reservations (
     "CREATE TABLE IF NOT EXISTS ledger_meta (key TEXT PRIMARY KEY, value REAL NOT NULL)",
 )
 
-# Settled rows cost what was billed; forfeited and open rows may have been billed, so they
-# keep their full reservation; released rows were certainly not billed.
-_COMMITTED_USD: Final = """
+# Committed cost of one reservation row, as an SQL expression. Settled rows cost what was
+# billed; forfeited and open rows may have been billed, so they keep their full reservation;
+# released rows were certainly not billed. Every reader of the ledger prices rows with it.
+COMMITTED_USD_SQL: Final = """
 CASE state
     WHEN 'settled' THEN actual_usd
     WHEN 'released' THEN 0.0
@@ -111,8 +113,11 @@ class CostLedger:
     def __init__(
         self, path: Path, *, phase: Phase, phase_cap_usd: float, hard_cap_usd: float
     ) -> None:
-        if phase_cap_usd <= 0:
-            raise ValueError("phase_cap_usd must be positive")
+        # NaN compares false with everything, so a NaN cap would never refuse a reservation.
+        if not math.isfinite(phase_cap_usd) or phase_cap_usd <= 0:
+            raise ValueError("phase_cap_usd must be a finite positive number")
+        if not math.isfinite(hard_cap_usd):
+            raise ValueError("hard_cap_usd must be a finite number")
         if hard_cap_usd <= HARD_CAP_MARGIN_USD:
             raise ValueError(
                 f"hard_cap_usd must exceed the ${HARD_CAP_MARGIN_USD:.2f} safety margin"
@@ -160,7 +165,7 @@ class CostLedger:
 
     @staticmethod
     def _committed(conn: sqlite3.Connection, *, phase: Phase | None) -> float:
-        query = f"SELECT COALESCE(SUM({_COMMITTED_USD}), 0.0) FROM reservations"
+        query = f"SELECT COALESCE(SUM({COMMITTED_USD_SQL}), 0.0) FROM reservations"
         if phase is None:
             return float(conn.execute(query).fetchone()[0])
         return float(conn.execute(query + " WHERE phase = ?", (phase,)).fetchone()[0])
@@ -303,7 +308,7 @@ class CostLedger:
         try:
             rows = conn.execute(
                 "SELECT stream_id, arm, session, component, COUNT(*) AS calls,"
-                f" SUM({_COMMITTED_USD}) AS usd,"
+                f" SUM({COMMITTED_USD_SQL}) AS usd,"
                 " COALESCE(SUM(input_tokens), 0) AS input_tokens,"
                 " COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,"
                 " COALESCE(SUM(output_tokens), 0) AS output_tokens"

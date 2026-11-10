@@ -9,7 +9,7 @@ The memory files were written from untrusted material: notes the agent wrote dur
 - `memory/injected.md`: a briefing placed in the agent's prompt for every question of the next session.
 - `memory/notes/`: notes the agent wrote with `memory_write` during sessions. This is the only place the agent can write, and a note it writes replaces the whole file.
 - `memory/wiki/`: topic pages, one per table or cross-table topic, at `memory/wiki/<slug>.md` with no subdirectories. The agent reads them but cannot change them, so what you leave there stays as you left it.
-- A file whose content is the single line `MOVED TO [[slug]]` is a retired stub. Stubs stay in place, get no `_index.md` entry and never hold anything but that line. `grep` for `^MOVED TO` lists them.
+- A file whose content is the single line `MOVED TO [[slug]]` is a retired stub. Stubs stay in place, get no `_index.md` entry and never hold anything but that line. `grep` for the literal text `MOVED TO` lists them.
 
 Every page except `_index.md`, `injected.md` and stubs starts with this frontmatter:
 
@@ -33,7 +33,7 @@ Leave the directory in a shape the agent can navigate quickly, and keep every fa
    - otherwise keep both on one line marked `CONFLICT: <statement A, its source and session>; <statement B, its source and session>`. Do not guess which is right.
 5. Give every page correct frontmatter, with a description that matches its current content.
 6. Make `memory/_index.md` complete and accurate: one line per live page, `[[slug]] — one sentence on what it covers`, grouped under `## <group>` headings; no line for a stub, for `_index.md` or for `injected.md`, and no live page without a line. Create it if it does not exist.
-7. Rewrite `memory/injected.md` whole from the wiki. It is cut off at $injected_tokens tokens (about $injected_words words), so stay well below that. Put first the rules and pitfalls that will help most in the next session (exact names, units, code meanings, required filters, the traps that cost the most), verified ones before unverified ones, and mark unverified ones as such. It is a briefing, not a log. End it with one line saying that `_index.md` lists every page and that each page's file is `wiki/<its slug>.md`. Beyond it, the agent can read only about $memory_read_tokens tokens of memory per question, by path with `memory_read` or by regular expression with `memory_search`, so keep pages focused and name tables and columns exactly.
+7. Rewrite `memory/injected.md` whole from the wiki. It is cut off at $injected_tokens tokens (about $injected_words words), so stay well below that. Put first the rules and pitfalls that will help most in the next session (exact names, units, code meanings, required filters, the traps that cost the most), verified ones before unverified ones, and mark unverified ones as such. It is a briefing, not a log. End it with one line saying that `_index.md` lists every page and that each page's file is `wiki/<its slug>.md`. Beyond it, the agent can read only about $memory_read_tokens tokens of memory per question, by path with `memory_read` or by searching for literal text with `memory_search`, so keep pages focused and name tables and columns exactly.
 8. Remove first-person narration and dead-end guesses, but keep notes of what was tried and why it failed. Keep every file under 100 KB, splitting a larger one by sub-topic.
 
 Do not invent facts and do not delete fact lines: you are reorganizing, not re-analyzing. Leave `_index.md` and `injected.md` in place even when there is little to say.
@@ -50,7 +50,7 @@ The directory is checked mechanically, and every failure is recorded against thi
 ## Work in as few turns as you can
 
 Every turn sends everything you have read to the model again, so do the same work in fewer, larger turns:
-- Read each file once, and make calls that do not depend on each other's results in the same turn, for example several reads, or the writes to different files.
+- Read each file once, in pages of at most 200 lines (`limit` 200 or less; a single result is cut at about $tool_result_tokens tokens), and make calls that do not depend on each other's results in the same turn, for example several reads, or the writes to different files.
 - A reply holds at most about $max_output_tokens tokens, your reasoning included. Create a short file with one `write_file`; change a long one with `edit_file` calls, each replacing one section, and spread a large rewrite over several of them. Fix `_index.md` with targeted edits rather than rewriting it whole.
 - A write or edit that returns `OK` needs no read-back; a failed edit returns an error that says why.
 

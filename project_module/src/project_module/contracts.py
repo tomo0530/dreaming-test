@@ -38,6 +38,11 @@ class ChatResult(BaseModel):
     assistant_message: dict[str, Any]
 
 
+# "auto", "required" or "none", or {"type": "function", "name": <tool>} to force one tool.
+# None leaves the provider's default (auto).
+ToolChoice = str | dict[str, Any]
+
+
 class ChatTransport(Protocol):
     """Raw model access that knows nothing about cost."""
 
@@ -49,6 +54,7 @@ class ChatTransport(Protocol):
         tools: list[dict[str, Any]] | None,
         reasoning_effort: str,
         max_completion_tokens: int,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult: ...
 
     def embed(self, *, model: str, texts: list[str]) -> tuple[list[list[float]], Usage]: ...
@@ -66,6 +72,7 @@ class LLMClient(Protocol):
         reasoning_effort: str,
         max_completion_tokens: int,
         tag: CostTag,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult: ...
 
     def embed(self, *, model: str, texts: list[str], tag: CostTag) -> list[list[float]]: ...
@@ -132,6 +139,7 @@ class QuestionResult(BaseModel):
     turns: int
     drift_dependent: bool
     injected_target: bool
+    # Markers of the false notes present in memory (marker or claim) when the question started.
     active_markers: list[str] = Field(default_factory=list)
 
     @property
@@ -158,7 +166,10 @@ class ConsolidationRecord(BaseModel):
     output_tokens: int
     stopped: str
     lint_problems: list[str] = Field(default_factory=list)
+    # Markers of the false notes still present in memory after this run (marker or claim).
     injected_markers_present: list[str] = Field(default_factory=list)
+    # Whether this run left `injected.md` with different content than it found.
+    injected_updated: bool
 
 
-RunStatus = Literal["running", "completed", "budget_exhausted", "failed"]
+RunStatus = Literal["running", "completed", "budget_exhausted", "interrupted", "failed"]

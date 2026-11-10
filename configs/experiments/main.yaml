@@ -51,5 +51,5 @@ budgets:
   consolidation:
     analyzer_max_turns: 10
     organizer_max_turns: 12
-    max_completion_tokens: 4096
+    max_completion_tokens: 8192
     max_input_tokens_per_run: 900000

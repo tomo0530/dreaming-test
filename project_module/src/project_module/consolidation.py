@@ -16,14 +16,15 @@ from project_module.config import ArmName, Budgets
 from project_module.contracts import ConsolidationRecord
 from project_module.llm.loop import run_tool_loop
 from project_module.memory.lint import lint_store
-from project_module.memory.store import MemoryStore, markers_in_store
-from project_module.memory.tools import FileToolset
+from project_module.memory.store import MemoryStore, false_notes_present
+from project_module.memory.tools import MAX_READ_RESULT_TOKENS, FileToolset
 from project_module.prompts import render_prompt
 
 logger = logging.getLogger(__name__)
 
 MEMORY_MOUNT: Final = "memory"
 TRANSCRIPTS_MOUNT: Final = "transcripts"
+INJECTED_FILE: Final = "injected.md"
 
 # Conservative words-per-token ratio, so that a model writing to the word guide stays in budget.
 _WORDS_PER_TOKEN: Final = 0.6
@@ -34,7 +35,7 @@ LintProfile = Literal["wiki", "summary"]
 class PhaseSpec(BaseModel):
     """One consolidation phase: who runs, with which prompt, for how long, seeing what."""
 
-    name: Literal["summarizer", "analyzer", "organizer"]
+    name: Literal["summarizer_review", "summarizer_rewrite", "analyzer", "organizer"]
     # File names under `prompts/`, concatenated in order into the system prompt.
     prompt_files: list[str] = Field(min_length=1)
     max_turns: int = Field(ge=1)
@@ -61,6 +62,7 @@ def prompt_values(budgets: Budgets) -> dict[str, int]:
         "injected_words": int(budgets.injected_tokens * _WORDS_PER_TOKEN),
         "memory_read_tokens": budgets.online.memory_read_tokens,
         "max_output_tokens": budgets.consolidation.max_completion_tokens,
+        "tool_result_tokens": MAX_READ_RESULT_TOKENS,
     }
 
 
@@ -76,7 +78,8 @@ def run_consolidation(
 
     All phases together may use at most `budgets.consolidation.max_input_tokens_per_run`
     input tokens: each phase gets what the earlier ones left. Afterwards the store is linted
-    and searched for the markers of the stream's false notes.
+    and searched for the stream's false notes (marker or claim), and the record says whether
+    `injected.md` changed.
 
     Raises
     ------
@@ -93,6 +96,7 @@ def run_consolidation(
     ):
         raise FileNotFoundError(f"no transcript {transcript} for session {session}")
     values = prompt_values(budgets)
+    injected_before = _read_injected(memory)
     remaining = budgets.consolidation.max_input_tokens_per_run
     turns = input_tokens = output_tokens = 0
     stops: list[str] = []
@@ -148,7 +152,8 @@ def run_consolidation(
             session,
             len(problems),
         )
-    markers = [note.marker for note in ctx.stream.injections] if ctx.stream else []
+    injected_after = _read_injected(memory)
+    notes = ctx.stream.injections if ctx.stream is not None else []
     return ConsolidationRecord(
         stream_id=ctx.stream_id,
         arm=arm,
@@ -159,8 +164,13 @@ def run_consolidation(
         output_tokens=output_tokens,
         stopped=";".join(stops),
         lint_problems=problems,
-        injected_markers_present=markers_in_store(memory, markers),
+        injected_markers_present=false_notes_present(memory, notes),
+        injected_updated=injected_after is not None and injected_after != injected_before,
     )
+
+
+def _read_injected(memory: MemoryStore) -> str | None:
+    return memory.read_all(INJECTED_FILE) if memory.exists(INJECTED_FILE) else None
 
 
 def _task_message(phase: PhaseSpec, *, session: int, transcript: str) -> str:

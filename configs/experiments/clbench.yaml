@@ -1,6 +1,8 @@
 # E4: CL-Bench database_exploration / schema_drift anchor (40 questions as 8 sessions of 5;
-# the drift falls between sessions 4 and 5). seeds are the official run indices; the query
-# limit (15), row cap and SQL timeout of the questions come from the CL-Bench adapter.
+# the drift falls between sessions 4 and 5). seeds are the official run indices. The query
+# limit (env.max_queries = 15), row cap (50) and SQL timeout (10 s) are CL-Bench's own and are
+# enforced by the adapter; budgets.online states the same values, and the runner refuses a
+# config whose values differ.
 name: clbench
 phase: clbench
 task: clbench
@@ -25,7 +27,7 @@ budgets:
   max_input_tokens_per_call: 64000
   online:
     max_turns: 17
-    max_queries: 8
+    max_queries: 15
     max_completion_tokens: 2048
     memory_read_tokens: 6000
     sql_row_limit: 50
@@ -33,5 +35,5 @@ budgets:
   consolidation:
     analyzer_max_turns: 10
     organizer_max_turns: 12
-    max_completion_tokens: 4096
+    max_completion_tokens: 8192
     max_input_tokens_per_run: 900000

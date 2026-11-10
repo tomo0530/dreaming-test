@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -8,21 +9,24 @@ from typing import Any
 import pytest
 import yaml
 from fakes import FakeLLM, FakeTransport, text_reply, tool_reply
+from project_module.agent.context import StopSignal
 from project_module.config import ArmName, Budgets, ExperimentConfig, OnlineBudget, load_models
-from project_module.contracts import ChatResult, CostTag, QuestionResult
+from project_module.contracts import ChatResult, CostTag, QuestionResult, ToolChoice
 from project_module.layout import RunLayout
 from project_module.llm.ledger import CostLedger
 from project_module.llm.metered import MeteredClient
 from project_module.manifest import load_manifest
-from project_module.memory.store import MemoryStore, markers_in_store
+from project_module.memory.store import MemoryStore, false_notes_present
 from project_module.runner import (
     InvalidStreamError,
+    RunLockedError,
     build_client,
     generate_streams,
     incomplete_jobs,
     make_env,
     read_job_status,
     run_experiment,
+    run_lock,
     run_stream_arm,
 )
 
@@ -62,6 +66,7 @@ class RunnerLLM(FakeLLM):
         reasoning_effort: str,
         max_completion_tokens: int,
         tag: CostTag,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResult:
         self.tags.append(tag)
         self.users.append(_user(messages))
@@ -116,7 +121,7 @@ def _run_job(
     client: FakeLLM,
     *,
     stream_root: Path | None = None,
-    stop: threading.Event | None = None,
+    stop: StopSignal | None = None,
 ) -> str:
     return run_stream_arm(
         config,
@@ -126,7 +131,7 @@ def _run_job(
         layout=layout,
         run_id=RUN_ID,
         client=client,
-        stop=stop or threading.Event(),
+        stop=stop or StopSignal(),
     )
 
 
@@ -209,22 +214,23 @@ def test_injection_happens_before_consolidation(tmp_path: Path) -> None:
     config = _config(arms=["A4"], inject_false_notes=True)
     layout = RunLayout(tmp_path / "run")
     memory = MemoryStore(layout.memory_dir(STREAM_ID, "A4"), writable=True)
+    notes = [make_stream(tmp_path / "s").injections[0]]
     at_consolidation: dict[int, list[str]] = {}
 
     def observe(tag: CostTag, _: list[dict[str, Any]]) -> None:
         if tag.component == "consolidation":
-            at_consolidation.setdefault(tag.session, markers_in_store(memory, [MARKER]))
+            at_consolidation.setdefault(tag.session, false_notes_present(memory, notes))
 
     client = RunnerLLM(observe=observe)
     assert _run_job(config, _env(), "A4", layout, client, stream_root=tmp_path / "s") == "completed"
 
     assert at_consolidation == {1: [], 2: [], 3: [MARKER]}
-    assert markers_in_store(memory, [MARKER]) == [MARKER]
+    assert false_notes_present(memory, notes) == [MARKER]
 
 
 def test_stop_set_before_start_records_budget_exhausted_without_calls(tmp_path: Path) -> None:
-    layout, stop, client = RunLayout(tmp_path / "run"), threading.Event(), RunnerLLM()
-    stop.set()
+    layout, stop, client = RunLayout(tmp_path / "run"), StopSignal(), RunnerLLM()
+    stop.request("budget_exhausted")
 
     assert _run_job(_config(), _env(), "A1", layout, client, stop=stop) == "budget_exhausted"
     assert client.tags == []
@@ -351,9 +357,7 @@ def test_generate_streams_refuses_invalid_stream(
     assert list(out.iterdir()) == []
 
     config_file = tmp_path / "gen.yaml"
-    config_file.write_text(
-        yaml.safe_dump(config.model_dump(mode="json", exclude_computed_fields=True))
-    )
+    config_file.write_text(yaml.safe_dump(config.model_dump(mode="json")))
     spec = importlib.util.spec_from_file_location(
         "generate_streams_cli", REPO / "scripts" / "generate_streams.py"
     )
@@ -375,3 +379,98 @@ def test_build_client_rejects_models_missing_from_the_models_file(tmp_path: Path
     config = _config(agent_model="no-such-model")
     with pytest.raises(ValueError, match="no-such-model"):
         build_client(config, ledger=tmp_path / "ledger.sqlite", models=MODELS)
+
+
+def test_stop_between_questions_keeps_only_completed_sessions(tmp_path: Path) -> None:
+    layout, stop = RunLayout(tmp_path / "run"), StopSignal()
+
+    def observe(tag: CostTag, messages: list[dict[str, Any]]) -> None:
+        if tag.session == 2 and tag.component == "online":
+            stop.request("interrupted")
+
+    client = RunnerLLM(observe=observe)
+    assert _run_job(_config(), _env(), "A1", layout, client, stop=stop) == "interrupted"
+
+    status = read_job_status(layout, STREAM_ID, "A1")
+    assert status is not None and (status.status, status.completed_sessions) == ("interrupted", 1)
+    # The second question of session 2 was never asked.
+    assert any("(q2a)" in user for user in client.users)
+    assert not any("(q2b)" in user for user in client.users)
+    resumed = RunnerLLM()
+    assert _run_job(_config(), _env(), "A1", layout, resumed) == "completed"
+    assert {tag.session for tag in resumed.tags} == {2, 3, 4}
+
+
+def test_session_logs_at_info_carry_no_grades(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="project_module"):
+        _run_job(_config(arms=["A0"]), _env(), "A0", RunLayout(tmp_path / "run"), RunnerLLM())
+
+    info = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.INFO)
+    assert "session 1 done" in info
+    for grade in ("correct", "no_submission", "wrong_result"):
+        assert grade not in info
+
+
+def test_run_refuses_a_run_directory_locked_by_another_process(tmp_path: Path) -> None:
+    config = _small_config("lock", ["l-01"], [20])
+    generate_streams(config, tmp_path / "streams")
+    kwargs: dict[str, Any] = {
+        "out_root": tmp_path / "outputs",
+        "streams_root": tmp_path / "streams",
+        "clbench_root": tmp_path / "none",
+    }
+    run_dir = run_experiment(config, client=RunnerLLM(), **kwargs)
+    blocked = RunnerLLM()
+
+    with run_lock(run_dir), pytest.raises(RunLockedError):
+        run_experiment(config, client=blocked, resume=run_dir, **kwargs)
+
+    assert blocked.tags == []
+    # Released on exit: the run can be resumed again.
+    assert run_experiment(config, client=RunnerLLM(), resume=run_dir, **kwargs) == run_dir
+
+
+def test_interrupt_stops_jobs_records_interrupted_and_releases_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _small_config("ctrl-c", ["c-01", "c-02"], [20, 21])
+    generate_streams(config, tmp_path / "streams")
+    started, stopped = threading.Event(), threading.Event()
+
+    class _Signal(StopSignal):
+        def request(self, reason: Any) -> None:
+            super().request(reason)
+            stopped.set()
+
+    def observe(tag: CostTag, messages: list[dict[str, Any]]) -> None:
+        started.set()
+        assert stopped.wait(timeout=10)
+
+    def interrupted_wait(*args: Any, **kwargs: Any) -> Any:
+        assert started.wait(timeout=10)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("project_module.runner.StopSignal", _Signal)
+    monkeypatch.setattr("project_module.runner.wait", interrupted_wait)
+    client = RunnerLLM(observe=observe)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_experiment(
+            config,
+            out_root=tmp_path / "outputs",
+            streams_root=tmp_path / "streams",
+            clbench_root=tmp_path / "none",
+            client=client,
+        )
+
+    [run_dir] = list((tmp_path / "outputs").iterdir())
+    assert incomplete_jobs(config, run_dir) == {
+        "c-01/A0": "interrupted",
+        "c-02/A0": "interrupted",
+    }
+    # Only the first question of the running job was asked; the other stream never started.
+    assert len(client.tags) == 1 and client.tags[0].stream_id == "c-01"
+    with run_lock(run_dir):
+        pass

@@ -355,3 +355,40 @@ def test_mechanical_summary_without_tool_calls_has_no_success_rate():
     summary = mechanical_summary(make_run(results=results))
 
     assert summary["tool_call_success_rate"] is None
+
+
+def test_mechanical_summary_reports_stop_reasons_and_injected_updates_per_arm():
+    consolidations = [
+        make_consolidation(
+            "s1", "A1", 1, stopped="summarizer_review:final;summarizer_rewrite:final"
+        ),
+        make_consolidation(
+            "s1",
+            "A1",
+            2,
+            stopped="summarizer_review:max_turns;summarizer_rewrite:final",
+            injected_updated=False,
+        ),
+        make_consolidation("s1", "A4", 1, stopped="analyzer:final;organizer:max_turns"),
+    ]
+
+    summary = mechanical_summary(make_run(consolidations=consolidations))
+
+    assert summary["consolidation"]["injected_updated_rate"] == pytest.approx(2 / 3)
+    assert summary["by_arm"]["A1"]["consolidation_stopped"] == {
+        "summarizer_review:final;summarizer_rewrite:final": 1,
+        "summarizer_review:max_turns;summarizer_rewrite:final": 1,
+    }
+    assert summary["by_arm"]["A1"]["injected_updated_rate"] == 0.5
+    assert summary["by_arm"]["A4"]["consolidation_stopped"] == {
+        "analyzer:final;organizer:max_turns": 1
+    }
+    assert summary["by_arm"]["A4"]["injected_updated_rate"] == 1.0
+
+
+def test_mechanical_summary_has_no_injected_rate_without_consolidations():
+    summary = mechanical_summary(make_run(results=[make_result("s1", "A0", 1, "q1")]))
+
+    assert summary["consolidation"]["injected_updated_rate"] is None
+    assert summary["by_arm"]["A0"]["injected_updated_rate"] is None
+    assert summary["by_arm"]["A0"]["consolidation_stopped"] == {}

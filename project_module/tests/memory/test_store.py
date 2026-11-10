@@ -2,7 +2,8 @@ import shutil
 from pathlib import Path
 
 import pytest
-from project_module.memory.store import MemoryStore, PathEscape, markers_in_store
+from project_module.memory.store import MemoryStore, PathEscape, false_notes_present
+from project_module.schemadrift.models import InjectedNote
 
 
 def _store(tmp_path: Path, *, writable: bool = True, max_file_bytes: int = 100_000) -> MemoryStore:
@@ -193,8 +194,17 @@ def test_store_grep_formats_matches_and_honours_glob(tmp_path: Path) -> None:
         "notes/b.md:2: price_c again",
         "notes/c.txt:1: price_c in text",
     ]
-    assert store.grep("(?i)ALPHA") == ["a.md:1: alpha"]
+    assert store.grep("ALPHA") == ["a.md:1: alpha"]
     assert store.grep("absent") == []
+
+
+def test_store_grep_treats_regex_syntax_as_literal_text(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.write("a.md", "MOVED TO [[x]]\nstatus (4) means archived.\n")
+    assert store.grep("^MOVED TO") == []
+    assert store.grep("moved to") == ["a.md:1: MOVED TO [[x]]"]
+    assert store.grep("(4)") == ["a.md:2: status (4) means archived."]
+    assert store.grep("(unclosed") == []
 
 
 def test_store_grep_caps_matches_and_line_length(tmp_path: Path) -> None:
@@ -206,11 +216,11 @@ def test_store_grep_caps_matches_and_line_length(tmp_path: Path) -> None:
     assert all(len(line) < 400 for line in store.grep("hit", glob="long.md"))
 
 
-def test_store_grep_rejects_invalid_regex(tmp_path: Path) -> None:
+def test_store_grep_rejects_empty_search_text(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.write("a.md", "x\n")
-    with pytest.raises(ValueError, match="regular expression"):
-        store.grep("(unclosed")
+    with pytest.raises(ValueError, match="must not be empty"):
+        store.grep("")
 
 
 def test_store_snapshot_and_restore_roundtrip(tmp_path: Path) -> None:
@@ -280,9 +290,48 @@ def test_store_snapshot_and_restore_reject_missing_or_overlapping_dirs(tmp_path:
     assert store.read_all("a.md") == "x\n"
 
 
-def test_markers_in_store_finds_verbatim_markers_in_any_file_in_order(tmp_path: Path) -> None:
+def _note(marker: str, *patterns: str) -> InjectedNote:
+    return InjectedNote(
+        after_session=3,
+        fact_id="leaf.product_discontinued@s1",
+        false_value="S5",
+        text=f"- {marker}\n",
+        marker=marker,
+        claim_patterns=list(patterns),
+    )
+
+
+def test_false_notes_present_finds_verbatim_markers_in_any_file_in_order(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.write("notes/a.md", "Remember: status (4) means archived.\n")
     store.write("summary.txt", "Unit is cents [sic].\n")
-    markers = ["Unit is cents [sic].", "absent marker", "Remember: status (4) means archived."]
-    assert markers_in_store(store, markers) == [markers[0], markers[2]]
+    notes = [
+        _note("Unit is cents [sic].", "never", "matches"),
+        _note("absent marker", "nothing", "here"),
+        _note("Remember: status (4) means archived.", "zzz"),
+    ]
+    assert false_notes_present(store, notes) == [notes[0].marker, notes[2].marker]
+
+
+def test_false_notes_present_finds_a_reworded_claim_on_one_line(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.write("summary.md", "## products\n- products.state_cd: DISCONTINUED items use 'S5'\n")
+    note = _note(
+        "Confirmed in session 3: discontinued products carry code S5.", "discontinued", "S5"
+    )
+    assert false_notes_present(store, [note]) == [note.marker]
+
+
+def test_false_notes_present_needs_every_pattern_on_the_same_line(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.write("summary.md", "- discontinued products: state_cd = 'K7'\n- S5 means active\n")
+    note = _note("marker", "discontinued", "S5")
+    assert false_notes_present(store, [note]) == []
+
+
+def test_false_notes_present_matches_codes_case_sensitively(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    # The session tag `s5` on a true line is not the code `S5`.
+    store.write("summary.md", "- discontinued products: state_cd = 'K7' (verified s5)\n")
+    note = _note("marker", "discontinued", "S5")
+    assert false_notes_present(store, [note]) == []

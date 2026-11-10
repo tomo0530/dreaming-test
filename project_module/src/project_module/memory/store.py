@@ -1,9 +1,10 @@
 """A directory of text files that a model may read and write, jailed to one root."""
 
-import re
 import shutil
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path, PurePosixPath
+
+from project_module.schemadrift.models import InjectedNote
 
 MAX_GREP_MATCHES = 200
 _MAX_GREP_LINE_CHARS = 300
@@ -119,26 +120,34 @@ class MemoryStore:
         }
         return sorted(matches)
 
-    def grep(self, pattern: str, glob: str = "**/*.md") -> list[str]:
-        """Lines matching the regular expression `pattern`, as `path:line: text`.
+    def lines(self, glob: str = "**/*") -> Iterator[tuple[str, int, str]]:
+        """Every line of the files matching `glob`, as `(path, 1-based number, text)`.
 
-        At most `MAX_GREP_MATCHES` lines are returned, each cut to 300 characters.
+        Bytes that are not valid UTF-8 are replaced, so any file can be scanned.
         """
-        try:
-            regex = re.compile(pattern)
-        except re.error as exc:
-            raise ValueError(f"invalid regular expression: {exc}") from exc
-        matches: list[str] = []
         for rel in self.glob(glob):
             text = self._resolve(rel).read_text(encoding="utf-8", errors="replace")
             for number, line in enumerate(_split_lines(text), start=1):
-                if not regex.search(line):
-                    continue
-                if len(line) > _MAX_GREP_LINE_CHARS:
-                    line = line[:_MAX_GREP_LINE_CHARS] + "..."
-                matches.append(f"{rel}:{number}: {line}")
-                if len(matches) == MAX_GREP_MATCHES:
-                    return matches
+                yield rel, number, line
+
+    def grep(self, needle: str, glob: str = "**/*.md") -> list[str]:
+        """Lines that contain `needle`, ignoring case, as `path:line: text`.
+
+        `needle` is literal text, not a pattern. At most `MAX_GREP_MATCHES` lines are
+        returned, each cut to 300 characters.
+        """
+        if not needle:
+            raise ValueError("search text must not be empty")
+        folded = needle.casefold()
+        matches: list[str] = []
+        for rel, number, line in self.lines(glob):
+            if folded not in line.casefold():
+                continue
+            if len(line) > _MAX_GREP_LINE_CHARS:
+                line = line[:_MAX_GREP_LINE_CHARS] + "..."
+            matches.append(f"{rel}:{number}: {line}")
+            if len(matches) == MAX_GREP_MATCHES:
+                break
         return matches
 
     def snapshot(self, dest: Path) -> None:
@@ -197,9 +206,13 @@ class MemoryStore:
             raise ValueError("snapshot directory must not overlap the store root")
 
 
-def markers_in_store(store: MemoryStore, markers: Sequence[str]) -> list[str]:
-    """The `markers` that occur verbatim on a line of any file in `store`, in the given order.
+def false_notes_present(store: MemoryStore, notes: Sequence[InjectedNote]) -> list[str]:
+    """Markers of the `notes` that are still in `store`, in the given order.
 
-    Used to tell whether an injected false note still survives in an arm's memory.
+    A note is present when a line of any file contains its marker, or contains every one of
+    its `claim_patterns`, so a reworded copy of the false claim counts too.
     """
-    return [marker for marker in markers if store.grep(re.escape(marker), "**/*")]
+    found: set[str] = set()
+    for _, _, line in store.lines():
+        found.update(note.marker for note in notes if note.present_in(line))
+    return [note.marker for note in notes if note.marker in found]

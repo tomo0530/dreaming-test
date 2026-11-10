@@ -13,8 +13,8 @@ from project_module.config import Budgets, ExperimentConfig
 from project_module.contracts import ToolCall
 from project_module.layout import RunLayout
 from project_module.memory.store import MemoryStore
-from project_module.memory.tools import MEMORY_WRITE_TOOL
 from project_module.schemadrift.models import Fact, InjectedNote, Stream
+from project_module.tool_names import MEMORY_WRITE_TOOL
 
 MemoryArm = RollingSummaryArm | OrganizeOnlyArm | VerifiedDreamingArm
 
@@ -28,6 +28,7 @@ FALSE_NOTE = InjectedNote(
     false_value="7",
     text=f"## Shipped orders\n{FALSE_CLAIM}\n- {MARKER}\n",
     marker=MARKER,
+    claim_patterns=["shipped", "'7'"],
 )
 NOTE_PATH = "notes/shipped-orders.md"
 TRANSCRIPT_3 = (
@@ -205,7 +206,7 @@ def test_memory_arms_skip_consolidation_after_last_session(tmp_path: Path, arm: 
 @pytest.mark.parametrize(
     ("arm", "phases"),
     [
-        (RollingSummaryArm(), ["summarizer"]),
+        (RollingSummaryArm(), ["summarizer_review", "summarizer_rewrite"]),
         (OrganizeOnlyArm(), ["organizer"]),
         (VerifiedDreamingArm(), ["analyzer", "organizer"]),
     ],
@@ -294,23 +295,30 @@ def test_memory_arms_require_a_memory_store(tmp_path: Path, arm: MemoryArm) -> N
         arm.setup(ctx)
 
 
-def test_a1_scripted_consolidation_corrects_the_summary(tmp_path: Path) -> None:
-    summary = (
-        "## order_status\n"
-        "- order_status code 3 means shipped (verified s3)\n"
-        "- order_status code 7 means cancelled (verified s3)\n"
-    )
+def test_a1_scripted_consolidation_reviews_then_rewrites(tmp_path: Path) -> None:
+    corrected = "- order_status code 7 means cancelled (verified s3)"
     llm = FakeLLM(
         [
+            # review: reads the transcript, corrects summary.md in place
             tool_reply(
-                ("read_file", {"path": "transcripts/session_003.txt", "limit": 1000}),
+                ("read_file", {"path": "transcripts/session_003.txt", "limit": 200}),
                 ("read_file", {"path": "memory/summary.md"}),
             ),
             tool_reply(
-                ("write_file", {"path": "memory/summary.md", "content": summary}),
-                ("write_file", {"path": "memory/injected.md", "content": INJECTED}),
+                (
+                    "edit_file",
+                    {
+                        "path": "memory/summary.md",
+                        "old": f"{FALSE_CLAIM}\n- {MARKER}",
+                        "new": f"- order_status code 3 means shipped (verified s3)\n{corrected}",
+                    },
+                ),
             ),
             text_reply("Replaced the contradicted claim about code 7."),
+            # rewrite: no transcripts, compacts and writes injected.md
+            tool_reply(("read_file", {"path": "memory/summary.md"})),
+            tool_reply(("write_file", {"path": "memory/injected.md", "content": INJECTED})),
+            text_reply("Rewrote injected.md."),
         ]
     )
     ctx = _make_ctx(tmp_path, llm, transcripts={3: TRANSCRIPT_3})
@@ -320,11 +328,17 @@ def test_a1_scripted_consolidation_corrects_the_summary(tmp_path: Path) -> None:
     record = arm.after_session(ctx, 3)
 
     assert record is not None
-    assert record.stopped == "summarizer:final"
-    assert record.turns == 3
+    assert record.phases == ["summarizer_review", "summarizer_rewrite"]
+    assert record.stopped == "summarizer_review:final;summarizer_rewrite:final"
+    assert record.turns == 6
     assert record.lint_problems == []
     assert record.injected_markers_present == []
+    assert record.injected_updated is True
     assert MARKER in _tool_results_seen(llm, call_index=1)
+    rewrite_tools = {t["function"]["name"] for t in llm.calls[3]["tools"]}
+    assert "transcripts (read-only)" not in str(llm.calls[3]["tools"])
+    assert rewrite_tools == {"read_file", "write_file", "edit_file", "glob", "grep"}
+    assert corrected in _memory(ctx).read_all("summary.md")
     assert arm.injected_context(ctx, 4) == INJECTED
 
 

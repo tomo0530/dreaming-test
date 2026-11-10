@@ -7,10 +7,10 @@ from project_module.agent.context import Arm, ArmContext
 from project_module.agent.session import CombinedToolSet, injected_layer, system_prompt
 from project_module.contracts import ProbeResult, ToolSet
 from project_module.llm.loop import LoopResult, run_tool_loop
-from project_module.memory.tools import MEMORY_WRITE_TOOL
 from project_module.prompts import load_prompt
 from project_module.schemadrift.models import Probe
 from project_module.schemadrift.probes import make_probes, probe_correct
+from project_module.tool_names import MEMORY_WRITE_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ def _ask(arm: Arm, ctx: ArmContext, session: int, probe: Probe, system: str) -> 
         max_input_tokens_per_call=budgets.max_input_tokens_per_call,
         max_total_input_tokens=None,
         tag=ctx.tag(arm.name, session, "probe"),
+        force_terminal_on_last_turn=True,
     )
     answer = _answer(loop)
     return ProbeResult(
@@ -99,6 +100,9 @@ def run_probes(arm: Arm, ctx: ArmContext, session: int) -> list[ProbeResult]:
     probes = make_probes(ctx.stream, session, ctx.config.probes_per_checkpoint)
     results = [_ask(arm, ctx, session, probe, system) for probe in probes]
     logger.info(
+        "%s %s: %d probes asked at session %d", ctx.stream_id, arm.name, len(results), session
+    )
+    logger.debug(
         "%s %s probes at session %d: %d/%d correct",
         ctx.stream_id,
         arm.name,

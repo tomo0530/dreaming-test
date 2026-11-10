@@ -4,9 +4,8 @@ import hashlib
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any
 
-from pydantic import BaseModel, field_serializer
+from pydantic import BaseModel
 
 from project_module.config import ExperimentConfig, Phase
 from project_module.layout import RunLayout
@@ -27,11 +26,6 @@ class RunManifest(BaseModel):
     config: ExperimentConfig
     # Stream id -> SHA-256 of the file that defines the stream's questions.
     input_sha256: dict[str, str]
-
-    @field_serializer("config")
-    def _serialize_config(self, config: ExperimentConfig) -> dict[str, Any]:
-        # Computed fields are derived on load and would be rejected as extra inputs.
-        return config.model_dump(mode="json", exclude_computed_fields=True)
 
 
 def config_sha256(config: ExperimentConfig) -> str:

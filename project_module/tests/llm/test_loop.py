@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 from fakes import FakeLLM, make_tag, text_reply, tool_reply
 from project_module.contracts import ChatResult, ToolCall, Usage
-from project_module.llm.loop import LoopResult, run_tool_loop
+from project_module.llm.loop import LENGTH_NUDGE, LoopResult, run_tool_loop
 
 SUBMIT = {
     "type": "function",
@@ -41,6 +41,8 @@ def _run(
     max_input_tokens_per_call: int = 10_000,
     max_total_input_tokens: int | None = None,
     events: list[tuple[str, dict[str, Any]]] | None = None,
+    terminal_tools: list[dict[str, Any]] | None = None,
+    force_terminal_on_last_turn: bool = False,
 ) -> LoopResult:
     return run_tool_loop(
         llm,
@@ -49,13 +51,14 @@ def _run(
         system="You are a test agent.",
         user="Do the task.",
         tools=tools,
-        terminal_tools=[SUBMIT],
+        terminal_tools=[SUBMIT] if terminal_tools is None else terminal_tools,
         max_turns=max_turns,
         max_completion_tokens=128,
         max_input_tokens_per_call=max_input_tokens_per_call,
         max_total_input_tokens=max_total_input_tokens,
         tag=make_tag(),
         on_event=None if events is None else lambda kind, data: events.append((kind, data)),
+        force_terminal_on_last_turn=force_terminal_on_last_turn,
     )
 
 
@@ -170,6 +173,79 @@ def test_loop_does_not_terminate_on_invalid_terminal_arguments() -> None:
 
     assert (result.stopped, result.turns) == ("terminal", 2)
     assert llm.calls[1]["messages"][-1]["content"].startswith("ERROR:")
+
+
+def test_loop_echoes_at_most_200_characters_of_invalid_arguments() -> None:
+    raw = "{" + "x" * 5_000
+    bad = ChatResult(
+        content=None,
+        tool_calls=[ToolCall(id="c1", name="a", arguments={"__invalid__": raw})],
+        usage=Usage(input_tokens=10, output_tokens=5),
+        assistant_message={"role": "assistant", "content": None, "tool_calls": []},
+    )
+    llm = FakeLLM([bad, text_reply("done")])
+
+    _run(llm, RecordingTools())
+
+    content = llm.calls[1]["messages"][-1]["content"]
+    assert content.endswith(raw[:200])
+    assert raw[:201] not in content
+
+
+def test_loop_nudges_after_an_empty_length_cutoff() -> None:
+    cut = ChatResult(
+        content=None,
+        usage=Usage(input_tokens=10, output_tokens=128),
+        finish_reason="length",
+        assistant_message={"role": "assistant", "content": None},
+    )
+    llm = FakeLLM([cut, text_reply("complete")])
+
+    result = _run(llm, RecordingTools())
+
+    assert (result.stopped, result.turns) == ("final", 2)
+    assert llm.calls[1]["messages"][-1] == {"role": "user", "content": LENGTH_NUDGE}
+    assert len(llm.calls[1]["messages"]) == 3
+
+
+def test_loop_forces_the_terminal_tool_only_on_the_last_turn() -> None:
+    llm = FakeLLM([tool_reply(("a", {})), tool_reply(("a", {})), tool_reply(("submit", {}))])
+
+    result = _run(llm, RecordingTools(), max_turns=3, force_terminal_on_last_turn=True)
+
+    assert result.stopped == "terminal"
+    assert [call["tool_choice"] for call in llm.calls] == [
+        None,
+        None,
+        {"type": "function", "name": "submit"},
+    ]
+
+
+def test_loop_forces_nothing_by_default() -> None:
+    llm = FakeLLM([tool_reply(("a", {})), tool_reply(("a", {}))])
+
+    _run(llm, RecordingTools(), max_turns=2)
+
+    assert [call["tool_choice"] for call in llm.calls] == [None, None]
+
+
+def test_loop_forces_nothing_without_terminal_tools() -> None:
+    llm = FakeLLM([tool_reply(("a", {}))])
+
+    _run(llm, RecordingTools(), max_turns=1, terminal_tools=[], force_terminal_on_last_turn=True)
+
+    assert llm.calls[0]["tool_choice"] is None
+
+
+def test_loop_refuses_to_force_one_of_several_terminal_tools() -> None:
+    other = {"type": "function", "function": {"name": "give_up", "parameters": {}}}
+    with pytest.raises(ValueError, match="exactly one terminal tool"):
+        _run(
+            FakeLLM(),
+            RecordingTools(),
+            terminal_tools=[SUBMIT, other],
+            force_terminal_on_last_turn=True,
+        )
 
 
 def test_loop_continues_after_length_cutoff() -> None:

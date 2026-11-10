@@ -1,6 +1,7 @@
 """What every arm receives from the runner, and the strategy interface arms implement."""
 
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from project_module.config import ArmName, ExperimentConfig
@@ -11,6 +12,33 @@ from project_module.retrieval import HybridIndex
 from project_module.schemadrift.models import InjectedNote, Stream
 
 Component = Literal["online", "consolidation", "probe", "embedding", "test"]
+StopReason = Literal["budget_exhausted", "interrupted"]
+
+
+class StopRequested(Exception):
+    """A job saw the run's stop signal between two questions and gave up its session."""
+
+
+class StopSignal:
+    """Asks every job of a run to stop, and says why; the first reason given wins."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._reason: StopReason = "budget_exhausted"
+
+    def request(self, reason: StopReason) -> None:
+        with self._lock:
+            if not self._event.is_set():
+                self._reason = reason
+                self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    @property
+    def reason(self) -> StopReason:
+        return self._reason
 
 
 @dataclass
@@ -29,6 +57,8 @@ class ArmContext:
     transcripts: MemoryStore
     # Only A2 gets an index.
     index: HybridIndex | None
+    # Shared by every job of the run; sessions check it before each question.
+    stop: StopSignal = field(default_factory=StopSignal)
 
     def tag(self, arm: ArmName, session: int, component: Component) -> CostTag:
         return CostTag(

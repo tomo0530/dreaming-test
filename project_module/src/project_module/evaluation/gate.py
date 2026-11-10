@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 ALL_ARMS = ("A0", "A1", "A2", "A3", "A4", "A5")
 PILOT_ARMS = ("A0", "A1", "A5")
 INJECTION_ARMS = ("A0", "A1", "A3", "A4")
+# Arms whose false-note harm is a required mechanism check, each on its own (00_design 9).
+HARMED_ARMS = ("A1", "A3")
 # The first sessions after the migrations that follow sessions 4 and 8.
 POST_MIGRATION_SESSIONS = (5, 9)
 _ONLINE = "online"
@@ -107,8 +109,8 @@ def evaluate_gate(
     evidence_ok, evidence_total = _evidence_counts(pilot_inj, streams, inj_streams)
     values["evidence_ok_count"] = float(evidence_ok)
     values["evidence_total_count"] = float(evidence_total)
-    values |= _false_note_stats(pilot_inj, ("A1", "A3"), "false_note_", streams, inj_streams)
-    values |= _false_note_stats(pilot_inj, ("A4",), "a4_false_note_", streams, inj_streams)
+    for arm in (*HARMED_ARMS, "A4"):
+        values |= _false_note_stats(pilot_inj, arm, streams, inj_streams)
     a4_corrections = _corrections(pilot_inj, "A4", streams, inj_streams)
     values["a4_corrections"] = float(a4_corrections)
     values["a1_corrections"] = float(_corrections(pilot_inj, "A1", streams, inj_streams))
@@ -119,7 +121,9 @@ def evaluate_gate(
         "a1_stale": stale_count >= cfg.min_a1_stale_errors,
         "scale": scale is not None,
         "evidence_present": evidence_total > 0 and evidence_ok == evidence_total,
-        "false_note_harms": _false_note_harms(values),
+        **{
+            f"false_note_harms_{arm.lower()}": _false_note_harms(values, arm) for arm in HARMED_ARMS
+        },
     }
     low, high = cfg.advisory_a0_range
     advisory = {
@@ -150,13 +154,16 @@ def _blockers(pilot: RunData, pilot_inj: RunData, streams: Mapping[str, Stream])
     """Reasons the gate cannot be evaluated at all."""
     blockers: list[str] = []
     for label, data in (("pilot", pilot), ("pilot_inj", pilot_inj)):
-        if not data.status:
+        if not data.required_jobs:
             blockers.append(f"{label} has no jobs")
-        blockers += [
-            f"{label}: job {key} is {state}, not completed"
-            for key, state in sorted(data.status.items())
-            if state != "completed"
-        ]
+        # Every job of the manifest must exist and be complete: a run interrupted before some
+        # streams started would otherwise look complete.
+        for key in data.required_jobs:
+            state = data.status.get(key)
+            if state is None:
+                blockers.append(f"{label}: required job {key} never started")
+            elif state != "completed":
+                blockers.append(f"{label}: job {key} is {state}, not completed")
     if blockers:
         return blockers
     if not analyzable_streams(pilot, PILOT_ARMS):
@@ -238,17 +245,15 @@ def _active_note_rows(
 
 
 def _false_note_stats(
-    data: RunData,
-    arms: Sequence[str],
-    prefix: str,
-    streams: Mapping[str, Stream],
-    stream_ids: Sequence[str],
+    data: RunData, arm: str, streams: Mapping[str, Stream], stream_ids: Sequence[str]
 ) -> dict[str, float]:
-    """Row count and accuracy of `arms` on active-note Q_inj rows, next to A0 on the same questions.
+    """Row count and accuracy of `arm` on active-note Q_inj rows, next to A0 on the same questions.
 
-    The accuracy keys are left out when there are no such rows.
+    Keys start with `<arm>_false_note_` (lower case); the accuracy keys are left out when there
+    are no such rows.
     """
-    rows = [r for arm in arms for r in _active_note_rows(data, arm, streams, stream_ids)]
+    prefix = _false_note_prefix(arm)
+    rows = _active_note_rows(data, arm, streams, stream_ids)
     stats = {f"{prefix}rows": float(len(rows))}
     if rows:
         stateless = {
@@ -259,8 +264,14 @@ def _false_note_stats(
     return stats
 
 
-def _false_note_harms(values: Mapping[str, float]) -> bool:
-    return values["false_note_rows"] > 0 and values["false_note_acc"] < values["false_note_a0_acc"]
+def _false_note_prefix(arm: str) -> str:
+    return f"{arm.lower()}_false_note_"
+
+
+def _false_note_harms(values: Mapping[str, float], arm: str) -> bool:
+    """`arm` answered at least one active-note Q_inj row, and worse than A0 on those questions."""
+    prefix = _false_note_prefix(arm)
+    return values[f"{prefix}rows"] > 0 and values[f"{prefix}acc"] < values[f"{prefix}a0_acc"]
 
 
 def _corrections(

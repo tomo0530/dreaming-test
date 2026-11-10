@@ -396,10 +396,9 @@ def test_search_tool_reports_when_nothing_is_indexed(tmp_path: Path) -> None:
         ToolCall(id="c1", name="search_transcripts", arguments={}),
         ToolCall(id="c1", name="search_transcripts", arguments={"query": 42}),
         ToolCall(id="c1", name="search_transcripts", arguments={"query": "  "}),
-        ToolCall(id="c1", name="search_transcripts", arguments={"__invalid__": "{oops"}),
         ToolCall(id="c1", name="delete_everything", arguments={"query": "x"}),
     ],
-    ids=["missing", "not-a-string", "blank", "invalid-json", "unknown-tool"],
+    ids=["missing", "not-a-string", "blank", "unknown-tool"],
 )
 def test_search_tool_returns_errors_as_text(tmp_path: Path, call: ToolCall) -> None:
     index = _make_index(tmp_path)
