@@ -40,7 +40,9 @@ class StatelessArm:
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return None
 
-    def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:
+    def inject_false_note(
+        self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
+    ) -> None:
         return None
 
     def after_session(self, ctx: ArmContext, session: int) -> ConsolidationRecord | None:
@@ -70,7 +72,9 @@ class RawRagArm:
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._search_tools(ctx, session, "probe")
 
-    def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:
+    def inject_false_note(
+        self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
+    ) -> None:
         return None
 
     def after_session(self, ctx: ArmContext, session: int) -> ConsolidationRecord | None:
@@ -147,7 +151,9 @@ class OracleArm:
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._read_tools(ctx)
 
-    def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:
+    def inject_false_note(
+        self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
+    ) -> None:
         return None
 
     def after_session(self, ctx: ArmContext, session: int) -> ConsolidationRecord | None:

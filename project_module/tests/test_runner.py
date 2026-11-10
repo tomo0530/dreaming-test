@@ -228,6 +228,25 @@ def test_injection_happens_before_consolidation(tmp_path: Path) -> None:
     assert false_notes_present(memory, notes) == [MARKER]
 
 
+def test_injection_after_consolidation_reaches_the_next_session_first(tmp_path: Path) -> None:
+    config = _config(arms=["A4"], inject_false_notes=True, false_note_timing="after_consolidation")
+    layout = RunLayout(tmp_path / "run")
+    memory = MemoryStore(layout.memory_dir(STREAM_ID, "A4"), writable=True)
+    notes = [make_stream(tmp_path / "s").injections[0]]
+    at_consolidation: dict[int, list[str]] = {}
+
+    def observe(tag: CostTag, _: list[dict[str, Any]]) -> None:
+        if tag.component == "consolidation":
+            at_consolidation.setdefault(tag.session, false_notes_present(memory, notes))
+
+    client = RunnerLLM(observe=observe)
+    assert _run_job(config, _env(), "A4", layout, client, stream_root=tmp_path / "s") == "completed"
+
+    assert at_consolidation == {1: [], 2: [], 3: []}
+    snapshot = MemoryStore(layout.snapshot_dir(STREAM_ID, "A4", 3) / "memory", writable=False)
+    assert MARKER in snapshot.read_all("injected.md")
+
+
 def test_stop_set_before_start_records_budget_exhausted_without_calls(tmp_path: Path) -> None:
     layout, stop, client = RunLayout(tmp_path / "run"), StopSignal(), RunnerLLM()
     stop.request("budget_exhausted")

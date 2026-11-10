@@ -100,7 +100,9 @@ class ScriptedArm:
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self.online_tools(ctx, session)
 
-    def inject_false_note(self, ctx: ArmContext, note: InjectedNote) -> None:
+    def inject_false_note(
+        self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
+    ) -> None:
         return None
 
     def after_session(self, ctx: ArmContext, session: int) -> ConsolidationRecord | None:
