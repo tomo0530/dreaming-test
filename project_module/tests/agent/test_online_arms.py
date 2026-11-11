@@ -165,8 +165,18 @@ def test_oracle_arm_requires_stream_and_memory(tmp_path: Path) -> None:
         OracleArm().setup(ctx)
 
 
-def _rag_ctx(tmp_path: Path, client: FakeLLM, *, a2_retrieval: str) -> ArmContext:
-    config = make_config().model_copy(update={"a2_retrieval": a2_retrieval})
+def _rag_ctx(
+    tmp_path: Path, client: FakeLLM, *, a2_retrieval: str, memory_read_tokens: int = 500
+) -> ArmContext:
+    base = make_config()
+    budgets = base.budgets.model_copy(
+        update={
+            "online": base.budgets.online.model_copy(
+                update={"memory_read_tokens": memory_read_tokens}
+            )
+        }
+    )
+    config = base.model_copy(update={"a2_retrieval": a2_retrieval, "budgets": budgets})
     return make_ctx(
         tmp_path,
         client=client,
@@ -205,6 +215,27 @@ def test_auto_retrieval_returns_excerpts_under_the_heading(tmp_path: Path) -> No
     assert "[session 1]" in context and "SELECT cust_ref FROM orders" in context
     assert client.tags[-1].component == "online"
     assert client.tags[-1].session == 2
+
+
+@pytest.mark.parametrize(
+    ("slack", "kept"), [(0, True), (-1, False)], ids=["exact-fit", "one-token-short"]
+)
+def test_auto_retrieval_fits_heading_and_labels_in_the_read_budget(
+    tmp_path: Path, slack: int, kept: bool
+) -> None:
+    # The excerpt text alone fits every budget below; heading and session label must fit too.
+    full = _rag_ctx(tmp_path / "full", FakeLLM(), a2_retrieval="auto")
+    arm = RawRagArm()
+    _index_session_1(arm, full)
+    reference = arm.question_context(full, question("q2", 2, text="Which column is cust_ref?"))
+    budget = count_tokens(reference) + slack
+    ctx = _rag_ctx(tmp_path / "tight", FakeLLM(), a2_retrieval="auto", memory_read_tokens=budget)
+    _index_session_1(arm, ctx)
+
+    context = arm.question_context(ctx, question("q2", 2, text="Which column is cust_ref?"))
+
+    assert count_tokens(context) <= budget
+    assert context == (reference if kept else "")
 
 
 def test_auto_retrieval_is_empty_before_anything_is_indexed(tmp_path: Path) -> None:

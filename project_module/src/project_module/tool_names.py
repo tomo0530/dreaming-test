@@ -5,6 +5,7 @@ This module imports nothing from the package, so any module can depend on it wit
 
 from typing import Final
 
+QUERY_TOOL: Final = "query"
 MEMORY_READ_TOOL: Final = "memory_read"
 MEMORY_SEARCH_TOOL: Final = "memory_search"
 MEMORY_WRITE_TOOL: Final = "memory_write"

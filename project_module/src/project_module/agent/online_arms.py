@@ -9,7 +9,7 @@ from project_module.config import ArmName
 from project_module.contracts import ConsolidationRecord, TaskQuestion, ToolSet
 from project_module.memory.store import MemoryStore
 from project_module.memory.tools import MemoryReadTools
-from project_module.retrieval import HybridIndex, TranscriptSearchTools
+from project_module.retrieval import Chunk, HybridIndex, TranscriptSearchTools
 from project_module.schemadrift.models import Fact, InjectedNote, Stream
 from project_module.tokens import count_tokens
 
@@ -60,12 +60,18 @@ def _require_index(ctx: ArmContext) -> HybridIndex:
     return ctx.index
 
 
+def _retrieval_context(chunks: Sequence[Chunk]) -> str:
+    excerpts = [f"[session {chunk.session}]\n{chunk.text}" for chunk in chunks]
+    return "\n\n".join([RETRIEVAL_HEADING, *excerpts])
+
+
 class RawRagArm:
     """A2: every finished transcript is indexed and searched for each question.
 
     With `a2_retrieval == "tool"` the agent searches with `search_transcripts`. With `"auto"`
-    it has no search tool; instead the top hits for the question text, within
-    `budgets.online.memory_read_tokens`, are put before the question.
+    it has no search tool; instead the top hits for the question text are put before the
+    question, as many as fit `budgets.online.memory_read_tokens` together with the heading and
+    their session labels.
     """
 
     name: ArmName = "A2"
@@ -84,19 +90,27 @@ class RawRagArm:
     def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
         if ctx.config.a2_retrieval != "auto":
             return ""
+        budget = ctx.config.budgets.online.memory_read_tokens
         chunks = _require_index(ctx).search(
             question.text,
             k=RETRIEVAL_K,
-            token_budget=ctx.config.budgets.online.memory_read_tokens,
+            token_budget=budget,
             tag=ctx.tag(self.name, question.session, "online"),
         )
+        # The search budgets the excerpt texts only; drop trailing hits until the whole
+        # context, as `retrieved_tokens` counts it, fits.
+        keep = len(chunks)
+        while keep and count_tokens(_retrieval_context(chunks[:keep])) > budget:
+            keep -= 1
         logger.debug(
-            "%s %s %s: %d excerpts retrieved", ctx.stream_id, self.name, question.qid, len(chunks)
+            "%s %s %s: %d of %d excerpts fit",
+            ctx.stream_id,
+            self.name,
+            question.qid,
+            keep,
+            len(chunks),
         )
-        if not chunks:
-            return ""
-        excerpts = [f"[session {chunk.session}]\n{chunk.text}" for chunk in chunks]
-        return "\n\n".join([RETRIEVAL_HEADING, *excerpts])
+        return _retrieval_context(chunks[:keep]) if keep else ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._search_tools(ctx, session, "probe")

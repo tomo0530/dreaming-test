@@ -6,7 +6,7 @@ import pytest
 from fakes import FakeLLM, text_reply, tool_reply
 from project_module.agent.context import ArmContext, StopRequested
 from project_module.agent.online_arms import RawRagArm
-from project_module.agent.session import CombinedToolSet, QueryTool, run_session
+from project_module.agent.session import CombinedToolSet, question_query_tool, run_session
 from project_module.config import ExperimentConfig
 from project_module.contracts import ChatResult, CostTag, ToolCall, ToolSet
 from project_module.llm import ContentFiltered
@@ -115,7 +115,7 @@ def test_session_enforces_env_max_queries(tmp_path: Path) -> None:
 
 def test_query_tool_rejects_missing_sql_without_counting() -> None:
     env = FakeEnv([question("q1")])
-    tool = QueryTool(env, 1)
+    tool = question_query_tool(env, 1)
 
     reply = tool.dispatch(ToolCall(id="c", name="query", arguments={}))
 
@@ -257,7 +257,7 @@ def test_combined_toolset_rejects_duplicate_names() -> None:
     env = FakeEnv([question("q1")])
 
     with pytest.raises(ValueError, match="duplicate tool name"):
-        CombinedToolSet([QueryTool(env, 1), QueryTool(env, 1)])
+        CombinedToolSet([question_query_tool(env, 1), question_query_tool(env, 1)])
 
 
 def test_combined_toolset_reports_unknown_tool_as_error() -> None:

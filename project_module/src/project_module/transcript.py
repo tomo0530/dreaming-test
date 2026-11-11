@@ -1,8 +1,9 @@
 """Session transcripts in the cookbook's labeled plain-text format.
 
 A transcript is evidence for later consolidation, so it records what the agent saw and did
-but never grading, gold answers, system prompts, injected memory, or what memory and
-transcript-search tools returned.
+but never system prompts, injected memory, or what memory and transcript-search tools
+returned. It holds no grading or gold answers except the task's own feedback events, which the
+agent saw: CL-Bench's, and SchemaDrift's with `feedback: graded`.
 """
 
 import json

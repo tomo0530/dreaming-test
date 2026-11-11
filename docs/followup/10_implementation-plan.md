@@ -103,14 +103,12 @@
 - [x] **Step 1: 失敗するテストを書く**
 
 ```python
-def test_new_fields_default_to_previous_behaviour(): ...  # 既定値の dump と、前回の main.yaml の config_sha256 が一致する
-def test_clbench_rejects_schemadrift_switches(): ...  # task=clbench で 6 つのいずれかを既定値以外 → ValidationError（parametrize）
-def test_old_manifests_still_match_after_new_fields(): ...  # test_runner.py:505-530 の新旧 2 形式に加え、d71c2f4 形式でも True
-def test_changed_switch_does_not_match_old_digest(): ...  # feedback="graded" の config は、旧形式の digest と一致しない
+def test_new_fields_default_to_previous_behaviour(): ...        # 既定値の dump と、前回の main.yaml の config_sha256 が一致する
+def test_clbench_rejects_schemadrift_switches(): ...            # task=clbench で 6 つのいずれかを既定値以外 → ValidationError（parametrize）
+def test_old_manifests_still_match_after_new_fields(): ...      # test_runner.py:505-530 の新旧 2 形式に加え、d71c2f4 形式でも True
+def test_changed_switch_does_not_match_old_digest(): ...        # feedback="graded" の config は、旧形式の digest と一致しない
 def test_followup_phases_are_valid(): ...
-def test_stream_dump_omits_default_drift(
-    tmp_path,
-): ...  # drift=True の dump に "drift" キーがない。False ならある
+def test_stream_dump_omits_default_drift(tmp_path): ...         # drift=True の dump に "drift" キーがない。False ならある
 ```
 
 - [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/test_contracts.py project_module/tests/test_runner.py -q` / Expected: 上記が FAIL
@@ -137,14 +135,12 @@ def test_stream_dump_omits_default_drift(
 - [x] **Step 1: 失敗するテストを書く**
 
 ```python
-def test_feedback_disabled_returns_none(): ...  # 既存 test_env.py:120 の期待を「既定では None」と読み替える
+def test_feedback_disabled_returns_none(): ...             # 既存 test_env.py:120 の期待を「既定では None」と読み替える
 def test_feedback_correct_line():
     assert env.feedback(q7, Grade(category="correct", score=1.0)) == "Question 7: CORRECT!"
-
-
-def test_feedback_incorrect_lists_expected_rows(): ...  # "Question 7: INCORRECT.\nCorrect answer:\n" + 期待値の行（" | " 区切り）
-def test_feedback_no_submission_wording(): ...  # CL-Bench と同じ文言
-def test_feedback_truncates_long_expected(): ...  # 25 行の期待値 → 20 行 + "[truncated]"、2000 文字以内
+def test_feedback_incorrect_lists_expected_rows(): ...     # "Question 7: INCORRECT.\nCorrect answer:\n" + 期待値の行（" | " 区切り）
+def test_feedback_no_submission_wording(): ...             # CL-Bench と同じ文言
+def test_feedback_truncates_long_expected(): ...           # 25 行の期待値 → 20 行 + "[truncated]"、2000 文字以内
 def test_make_env_rejects_drift_mismatch(tmp_path): ...
 def test_make_env_passes_graded_feedback(tmp_path): ...
 ```
@@ -174,15 +170,9 @@ def test_make_env_passes_graded_feedback(tmp_path): ...
 
 ```python
 def test_no_drift_stream_has_static_facts(tmp_path): ...
-def test_no_drift_keeps_names_of_same_seed(
-    tmp_path,
-): ...  # 同じ seed の drift あり版と、エポック 1 の表名・列名・コード表が一致する
-def test_no_drift_streams_validate_for_many_seeds(
-    tmp_path,
-): ...  # seed 4501〜4520 で validate_stream が問題を返さない
-def test_drift_default_is_unchanged(
-    tmp_path,
-): ...  # drift=True（既定）の stream.json と DB が変更前と同じハッシュ（seed 4521 で、変更前の値を固定値として埋める）
+def test_no_drift_keeps_names_of_same_seed(tmp_path): ...       # 同じ seed の drift あり版と、エポック 1 の表名・列名・コード表が一致する
+def test_no_drift_streams_validate_for_many_seeds(tmp_path): ...  # seed 4501〜4520 で validate_stream が問題を返さない
+def test_drift_default_is_unchanged(tmp_path): ...              # drift=True（既定）の stream.json と DB が変更前と同じハッシュ（seed 4521 で、変更前の値を固定値として埋める）
 ```
 
 - [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/schemadrift -q`
@@ -228,21 +218,21 @@ def test_drift_default_is_unchanged(
 - [x] **Step 1: 失敗するテストを書く**
 
 ```python
-def test_note_turn_writes_note_after_submit(): ...  # FakeLLM の台本: query → submit → memory_write。note_written=True、notes/s01-<qid>.md がある
-def test_note_turn_closes_all_unanswered_calls(): ...  # 同じ応答に submit と query → 両方に出力を補った会話が送られる（FakeTransport.calls で call_id の対応を確かめる）
-def test_note_turn_runs_after_no_submission(): ...  # ターン上限で未提出 → メモのターンは回り、会話に出力のない call が残らない
-def test_note_turn_skipped_without_memory_write_tool(): ...  # A0 では呼び出し回数が増えない
+def test_note_turn_writes_note_after_submit(): ...            # FakeLLM の台本: query → submit → memory_write。note_written=True、notes/s01-<qid>.md がある
+def test_note_turn_closes_all_unanswered_calls(): ...         # 同じ応答に submit と query → 両方に出力を補った会話が送られる（FakeTransport.calls で call_id の対応を確かめる）
+def test_note_turn_runs_after_no_submission(): ...            # ターン上限で未提出 → メモのターンは回り、会話に出力のない call が残らない
+def test_note_turn_skipped_without_memory_write_tool(): ...   # A0 では呼び出し回数が増えない
 def test_note_turn_content_filter_is_recorded_not_raised(): ...  # note_written=False、例外なし
 def test_note_turn_propagates_budget_exceeded(): ...
-def test_notes_of_one_session_do_not_overwrite(): ...  # 2 問で 2 ファイル
+def test_notes_of_one_session_do_not_overwrite(): ...         # 2 問で 2 ファイル
 def test_note_turn_not_counted_in_result_tool_calls(): ...
-def test_feedback_never_reaches_agent_messages(): ...  # graded の env の A0/A1/A4 で、FakeTransport.calls の全 messages に "CORRECT" / "Correct answer" が現れない
-def test_feedback_line_written_after_note(): ...  # transcript で TOOL CALL memory_write が EVENT feedback より前
-def test_verify_addendum_follows_memory_block(): ...  # 有効時だけ、記憶ブロックの後に足される
-def test_auto_retrieval_prepends_excerpts(): ...  # 2 セッション目の user に見出しと断片がある。retrieved_tokens > 0
-def test_auto_retrieval_not_written_to_transcript(): ...  # transcript の USER 行は問題文だけ
+def test_feedback_never_reaches_agent_messages(): ...         # graded の env の A0/A1/A4 で、FakeTransport.calls の全 messages に "CORRECT" / "Correct answer" が現れない
+def test_feedback_line_written_after_note(): ...              # transcript で TOOL CALL memory_write が EVENT feedback より前
+def test_verify_addendum_follows_memory_block(): ...          # 有効時だけ、記憶ブロックの後に足される
+def test_auto_retrieval_prepends_excerpts(): ...              # 2 セッション目の user に見出しと断片がある。retrieved_tokens > 0
+def test_auto_retrieval_not_written_to_transcript(): ...      # transcript の USER 行は問題文だけ
 def test_auto_mode_has_no_search_tool(): ...
-def test_run_forced_turn_dispatches_once(): ...  # llm/test_loop.py
+def test_run_forced_turn_dispatches_once(): ...               # llm/test_loop.py
 def test_note_turn_sends_same_tool_schemas_as_answer_loop(): ...  # FakeTransport.calls の tools 引数が、回答ループと同じ並びで一致する
 ```
 
@@ -271,9 +261,9 @@ def test_note_turn_sends_same_tool_schemas_as_answer_loop(): ...  # FakeTranspor
   - `VerifiedDreamingArm`:
     - `session_notes` が真のとき、analyzer の末尾に `notes_handling.md` を足す。
     - `consolidator_sql` が真のとき、analyzer を `sql_probe=True` にし、`consolidator_sql_addendum.md` を足す。
-  - `ConsolidatorQueryTool(env: TaskEnv, session: int, *, max_queries: int = 10)` を `consolidation.py` に置く。実行経路は `QueryTool` と同じ `env.run_query(session, sql)` で、説明文と上限だけを替える。11 回目以降は実行せず、`ERROR:` の文字列を返す。
+  - `consolidation.consolidator_query_tool(env: TaskEnv, session: int)`（R1 で `agent/session.py` の `QueryTool` に上限と説明文を渡す形へまとめた。上限は 10 回）。実行経路は `QueryTool` と同じ `env.run_query(session, sql)` で、説明文と上限だけを替える。11 回目以降は実行せず、`ERROR:` の文字列を返す。
   - `run_consolidation`:
-    - `sql_probe` のフェーズでは、tool 群を `CombinedToolSet([FileToolset(mounts), ConsolidatorQueryTool(ctx.env, session)])` にする。
+    - `sql_probe` のフェーズでは、tool 群を `CombinedToolSet([FileToolset(mounts), consolidator_query_tool(ctx.env, session)])` にする。
     - on_event で次を数える。
       - `notes_files_read`: `notes/` 配下の、退役していない（内容が `MOVED TO` / `MERGED INTO` の 1 行ではない）ファイルへの `read_file` のうち、`ERROR:` でなく、ファイルの本文を 1 行以上返したもの（範囲外の offset で `[lines 0-0 of N]` だけを返した結果は数えない）。
       - `sql_queries`: 実行されて `ERROR:` でない結果を返した `query`。
@@ -286,10 +276,10 @@ def test_a1_gets_notes_write_only_with_session_notes(): ...
 def test_a1_review_has_notes_fragments_only_with_session_notes(): ...
 def test_a4_analyzer_gets_query_tool_only_with_consolidator_sql(): ...
 def test_consolidator_query_uses_finished_session_epoch(): ...  # session=4 の統合はエポック 1 の DB を照会する
-def test_consolidator_query_limit(): ...  # 11 回目は ERROR の文字列
+def test_consolidator_query_limit(): ...                       # 11 回目は ERROR の文字列
 def test_record_counts_live_notes_reads_and_executed_queries(): ...  # 退役メモとエラー結果は数えない
-def test_default_config_phases_unchanged(): ...  # 既定設定の A1/A4 の PhaseSpec が変更前と同じ
-def test_core_prompt_untouched(): ...  # _consolidation_core.md の SHA-256 が変更前と同じ
+def test_default_config_phases_unchanged(): ...                # 既定設定の A1/A4 の PhaseSpec が変更前と同じ
+def test_core_prompt_untouched(): ...                          # _consolidation_core.md の SHA-256 が変更前と同じ
 ```
 
 - [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/test_consolidation.py project_module/tests/agent/test_memory_arms.py -q`
@@ -344,29 +334,22 @@ def test_core_prompt_untouched(): ...  # _consolidation_core.md の SHA-256 が�
 ```python
 def test_common_streams_drops_stream_missing_any_condition(): ...
 def test_exclusions_count_by_reason_and_condition(): ...
-def test_contrast_pairs_by_stream_across_runs(): ...  # 2 run、3 ストリームで手計算の差と一致
+def test_contrast_pairs_by_stream_across_runs(): ...           # 2 run、3 ストリームで手計算の差と一致
 def test_interaction_is_difference_of_differences(): ...
 def test_fixed_sequence_stops_confirmatory_after_first_failure():
-    out = fixed_sequence(
-        [("H1", CI(0.03, 0.01, 0.05)), ("H2", CI(0.0, -0.02, 0.02)), ("H3", CI(0.05, 0.02, 0.08))],
-        n_streams=40,
-    )
+    out = fixed_sequence([("H1", CI(0.03, 0.01, 0.05)), ("H2", CI(0.0, -0.02, 0.02)), ("H3", CI(0.05, 0.02, 0.08))], n_streams=40)
     assert [r["confirmatory"] for r in out] == [True, True, False]
     assert [r["verdict"] for r in out] == ["supported", "not_shown", "supported"]
-
-
 def test_fixed_sequence_with_missing_streams_is_exploratory(): ...  # n_streams=39 → すべて False
 def test_unfiltered_ref_query_definition():
     # "select * from lkp_values" → True
     # "select * from lkp_values where lkp_type='x'"、"... limit 5"、"select count(*) from lkp_values"、"pragma table_info(lkp_values)"、ERROR を返した照会 → False
     ...
-
-
-def test_schema_inspection_definition(): ...  # "pragma table_info(x)" と "select name from sqlite_master" → True、"select 'pragma'" → False
-def test_change_records_skip_negated_lines(): ...  # "status was 3 in s1-s4" → 1、"No schema changes since s1" → 0、"CONFLICT: ..." → 1
-def test_void_policy_lines_need_column_and_negation(): ...  # 列名は soft_delete Fact の value（"ord_hdr.void_flg = 1" → "void_flg"）から取る
-def test_drift_kind_matches_drift_dependent(): ...  # 既存の生成器のストリームで、drift 種別を持つ問題の集合が drift_dependent の集合と一致する
-def test_gate_fails_on_low_note_rate(): ...  # A1 の note_written 0.85 → G3 不合格
+def test_schema_inspection_definition(): ...                   # "pragma table_info(x)" と "select name from sqlite_master" → True、"select 'pragma'" → False
+def test_change_records_skip_negated_lines(): ...              # "status was 3 in s1-s4" → 1、"No schema changes since s1" → 0、"CONFLICT: ..." → 1
+def test_void_policy_lines_need_column_and_negation(): ...     # 列名は soft_delete Fact の value（"ord_hdr.void_flg = 1" → "void_flg"）から取る
+def test_drift_kind_matches_drift_dependent(): ...            # 既存の生成器のストリームで、drift 種別を持つ問題の集合が drift_dependent の集合と一致する
+def test_gate_fails_on_low_note_rate(): ...                    # A1 の note_written 0.85 → G3 不合格
 def test_gate_requires_no_feedback_in_fb0(): ...
 def test_gate_passes_on_all_mechanical_conditions(): ...
 ```
@@ -399,18 +382,16 @@ def test_gate_passes_on_all_mechanical_conditions(): ...
   - `*_null.yaml`: `drift: false`、群は A1, A4。
   - `fu_clbench.yaml`: 前回の `clbench.yaml` と同じ値にする。`phase: fu_clbench`、`stream_ids: clbench-r3`〜`r17`、`seeds: 3`〜`17`。
   - `budgets.phase_cap_usd` は 00_design §8 の値、`hard_cap_usd` は 200。
-  - `concurrency` は、本番の 5 run の合計が 24 になるように配る（`fu_fb0` 7、`fu_fb1` 7、`fu_verify` 4、`fu_probe` 3、`fu_null` 3）。
+  - `concurrency` は、同時に始める run の合計が 24 になるように配る（`fu_fb0` 7、`fu_fb1` 7、`fu_verify` 2、`fu_probe` 3、`fu_null` 3、`fu_clbench` 2。R1 レビューで `fu_clbench` を含めた）。
 - `scripts/generate_streams.py` と `scripts/run_experiment.py` は、新しい yaml のパスを渡すだけで動くこと。CLI の変更が要る場合だけ、最小限に直す。
 
 - [x] **Step 1: 失敗するテストを書く**
 
 ```python
-def test_followup_configs_load_and_match_design(): ...  # 全 yaml が読め、phase・群・ストリーム・スイッチが 00_design §6・§7 と一致する
+def test_followup_configs_load_and_match_design(): ...        # 全 yaml が読め、phase・群・ストリーム・スイッチが 00_design §6・§7 と一致する
 def test_fb0_fb1_share_streams_and_differ_only_in_feedback(): ...
 def test_pilot_configs_mirror_main_except_streams_and_phase(): ...
-def test_e2e_fake_followup_pilot_gate(
-    tmp_path,
-): ...  # FakeLLM で pilot の 5 run を 1 ストリーム × 2 セッション回し、analyze_followup --gate が G0〜G7 の値を出す
+def test_e2e_fake_followup_pilot_gate(tmp_path): ...           # FakeLLM で pilot の 5 run を 1 ストリーム × 2 セッション回し、analyze_followup --gate が G0〜G7 の値を出す
 def test_e2e_fake_no_drift_stream(tmp_path): ...
 ```
 

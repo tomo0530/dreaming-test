@@ -11,12 +11,11 @@ from project_module.memory.store import false_notes_present
 from project_module.prompts import load_prompt, render_prompt
 from project_module.schemadrift.models import InjectedNote
 from project_module.tokens import count_tokens, truncate_to_tokens
-from project_module.tool_names import MEMORY_WRITE_TOOL
+from project_module.tool_names import MEMORY_WRITE_TOOL, QUERY_TOOL
 from project_module.transcript import TranscriptWriter
 
 logger = logging.getLogger(__name__)
 
-QUERY_TOOL: Final = "query"
 NOTE_PROMPT: Final = "note_turn.md"
 NOTE_MAX_COMPLETION_TOKENS: Final = 1024
 # Prompt file appended to the agent's system prompt for each `agent_prompt_addendum` value.
@@ -91,16 +90,40 @@ class CombinedToolSet(ToolSet):
 
 
 class QueryTool(ToolSet):
-    """The `query(sql)` tool for one question, limited to `env.max_queries` attempts.
+    """The `query(sql)` tool on the database of one session, limited to `max_queries` attempts.
 
-    Attempts beyond the limit are not run but still count, so `attempts` is the number of
-    queries the question used for grading. Calls without a usable `sql` argument are rejected
-    without counting.
+    Queries run with `env.run_query(session, sql)`. Attempts beyond the limit are not run but
+    still count, so `attempts` is the number of queries used, and return an `ERROR:` text.
+    Calls without a usable `sql` argument are rejected without counting.
+
+    Parameters
+    ----------
+    env
+        The task environment that runs the queries.
+    session
+        The session whose database is queried.
+    max_queries
+        Attempts that are run.
+    description
+        The tool description shown to the model.
+    limit_error
+        What follows `ERROR:` in the reply to an attempt beyond the limit.
     """
 
-    def __init__(self, env: TaskEnv, session: int) -> None:
+    def __init__(
+        self,
+        env: TaskEnv,
+        session: int,
+        *,
+        max_queries: int,
+        description: str,
+        limit_error: str,
+    ) -> None:
         self._env = env
         self._session = session
+        self._max_queries = max_queries
+        self._description = description
+        self._limit_error = limit_error
         self.attempts = 0
 
     def schemas(self) -> list[dict[str, Any]]:
@@ -109,13 +132,7 @@ class QueryTool(ToolSet):
                 "type": "function",
                 "function": {
                     "name": QUERY_TOOL,
-                    "description": (
-                        "Run one read-only SQL statement against the database and return the "
-                        "result as text, or an error message starting with `ERROR:`. Long "
-                        "results are cut to a row limit, so use aggregates, filters or LIMIT. "
-                        f"You may run at most {self._env.max_queries} queries per question; "
-                        "further calls are not run."
-                    ),
+                    "description": self._description,
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -133,12 +150,29 @@ class QueryTool(ToolSet):
         if not isinstance(sql, str) or not sql.strip():
             return f"{ERROR_PREFIX} 'sql' must be a non-empty string."
         self.attempts += 1
-        if self.attempts > self._env.max_queries:
-            return (
-                f"{ERROR_PREFIX} query limit reached ({self._env.max_queries} per question); "
-                "the query was not run. Submit your answer now."
-            )
+        if self.attempts > self._max_queries:
+            return f"{ERROR_PREFIX} {self._limit_error}"
         return self._env.run_query(self._session, sql)
+
+
+def question_query_tool(env: TaskEnv, session: int) -> QueryTool:
+    """The agent's `query` tool for one question, limited to `env.max_queries` attempts."""
+    return QueryTool(
+        env,
+        session,
+        max_queries=env.max_queries,
+        description=(
+            "Run one read-only SQL statement against the database and return the "
+            "result as text, or an error message starting with `ERROR:`. Long "
+            "results are cut to a row limit, so use aggregates, filters or LIMIT. "
+            f"You may run at most {env.max_queries} queries per question; "
+            "further calls are not run."
+        ),
+        limit_error=(
+            f"query limit reached ({env.max_queries} per question); "
+            "the query was not run. Submit your answer now."
+        ),
+    )
 
 
 class _QuestionRecorder:
@@ -249,7 +283,7 @@ def _solve(
     writer: TranscriptWriter,
 ) -> QuestionResult:
     active_markers = [] if ctx.memory is None else false_notes_present(ctx.memory, notes)
-    query_tool = QueryTool(ctx.env, question.session)
+    query_tool = question_query_tool(ctx.env, question.session)
     arm_tools = arm.online_tools(ctx, question.session)
     tools = CombinedToolSet([query_tool] if arm_tools is None else [query_tool, arm_tools])
     recorder = _QuestionRecorder(writer)

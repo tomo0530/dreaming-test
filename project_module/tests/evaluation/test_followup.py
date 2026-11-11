@@ -234,6 +234,8 @@ def test_clbench_summary_compares_a4_with_a1_and_a0() -> None:
 _ARMS: tuple[ArmName, ...] = ("A0", "A1", "A4")
 _STREAMS = ("s1", "s2")
 _SESSIONS = 2
+# Query attempts of every question, and how many of them ran without an error.
+_QUERIES, _OK_QUERIES = 5, 2
 # What every A1/A4 memory says after session 1: one change record and one void-column policy.
 _INJECTED = "- status was 3 in s1\n- Do not filter on void_flg\n- Delivered = 6\n"
 _SOFT_DELETE = Fact(
@@ -270,7 +272,15 @@ def _write_job(
     status: RunStatus,
 ) -> None:
     for session in range(1, sessions + 1):
-        row = make_result(stream_id, arm, session, f"q{session}", "correct" if correct else "stale")
+        row = make_result(
+            stream_id,
+            arm,
+            session,
+            f"q{session}",
+            "correct" if correct else "stale",
+            queries=_QUERIES,
+            ok_queries=_OK_QUERIES,
+        )
         write_jsonl(layout.results_file(stream_id, arm, session), [row])
         path = layout.transcript_file(stream_id, arm, session)
         with TranscriptWriter(path, stream_id=stream_id, session=session) as writer:
@@ -298,8 +308,14 @@ _RUN_ARMS: dict[str, tuple[ArmName, ...]] = {
 }
 
 
-def _write_followup_runs(tmp_path: Path, labels: Sequence[str]) -> dict[str, Path]:
-    """Runs over s1 and s2; A4 answers right only in fb1, and fb1/A4 fails s2 after s1."""
+# Jobs that fail after their first session, as (run label, stream, arm).
+_BROKEN: frozenset[tuple[str, str, str]] = frozenset({("fb1", "s2", "A4")})
+
+
+def _write_followup_runs(
+    tmp_path: Path, labels: Sequence[str], broken: frozenset[tuple[str, str, str]]
+) -> dict[str, Path]:
+    """Runs over s1 and s2; A4 answers right only in fb1, and each `broken` job fails after s1."""
     run_dirs: dict[str, Path] = {}
     for label in labels:
         run_dir = tmp_path / f"{label}-run"
@@ -307,24 +323,26 @@ def _write_followup_runs(tmp_path: Path, labels: Sequence[str]) -> dict[str, Pat
         write_run_manifest(run_dir, arms=list(_RUN_ARMS[label]), stream_ids=list(_STREAMS))
         for stream_id in _STREAMS:
             for arm in _RUN_ARMS[label]:
-                broken = (label, stream_id, arm) == ("fb1", "s2", "A4")
+                broken_job = (label, stream_id, arm) in broken
                 _write_job(
                     layout,
                     stream_id,
                     arm,
                     correct=arm != "A4" or label == "fb1",
-                    sessions=1 if broken else _SESSIONS,
-                    status="failed" if broken else "completed",
+                    sessions=1 if broken_job else _SESSIONS,
+                    status="failed" if broken_job else "completed",
                 )
         run_dirs[label] = run_dir
     return run_dirs
 
 
-def _summarize(tmp_path: Path, labels: Sequence[str]) -> dict[str, Any]:
+def _summarize(
+    tmp_path: Path, labels: Sequence[str], broken: frozenset[tuple[str, str, str]] = _BROKEN
+) -> dict[str, Any]:
     streams_root = tmp_path / "streams"
     for stream_id in _STREAMS:
         _write_stream(streams_root, stream_id)
-    run_dirs = _write_followup_runs(tmp_path, labels)
+    run_dirs = _write_followup_runs(tmp_path, labels, broken)
     ledger = tmp_path / "ledger.sqlite"
     write_ledger(
         ledger,
@@ -366,6 +384,26 @@ def test_summarize_followup_reads_memory_snapshots_of_auxiliary_runs(tmp_path: P
     # sens/A4 and fb0/A4 both answer nothing right, sens/A1 and fb0/A1 everything.
     assert exploratory["sensitivity"]["A4-A1"]["sens"]["mean"] == -1.0
     assert exploratory["sensitivity"]["A4-A1"]["fb0"]["mean"] == -1.0
+
+
+def test_summarize_followup_counts_only_successful_queries_per_question(tmp_path: Path) -> None:
+    metrics = _summarize(tmp_path, ["fb0", "fb1"])
+
+    assert metrics["by_condition"]["fb0/A0"]["queries_per_question"] == _OK_QUERIES
+
+
+def test_summarize_followup_reports_exclusions_of_every_comparison_family(tmp_path: Path) -> None:
+    broken = _BROKEN | {("probe", "s1", "A4"), ("null", "s2", "A1")}
+
+    metrics = _summarize(tmp_path, ["fb0", "fb1", "probe", "null"], broken)
+
+    excluded = metrics["excluded"]
+    assert excluded["primary"] == {"failed": {"fb1/A4": 1}}
+    assert excluded["probe"] == {"failed": {"probe/A4": 1}}
+    assert excluded["null"] == {"failed": {"null/A1": 1}}
+    # Families whose run was not given, or whose arm no run holds, report nothing.
+    assert excluded["verify"] is None and excluded["sens"] is None
+    assert excluded["a2"] is None and excluded["a5"] is None
 
 
 def test_summarize_followup_requires_both_feedback_runs(tmp_path: Path) -> None:

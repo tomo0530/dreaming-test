@@ -21,7 +21,7 @@ feedback: none
 session_notes: true
 a2_retrieval: auto
 agent_prompt_addendum: verify_memory
-concurrency: 4
+concurrency: 2
 budgets:
   phase_cap_usd: 25
   hard_cap_usd: 200.0

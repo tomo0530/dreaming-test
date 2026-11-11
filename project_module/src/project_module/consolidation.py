@@ -3,8 +3,8 @@
 A phase is one `run_tool_loop` conversation of the consolidator model with the five file
 tools of `FileToolset`. The memory directory is always mounted read-write as ``memory``; the
 job's transcripts are mounted read-only as ``transcripts`` only for phases allowed to read them.
-A phase with `sql_probe` also holds `ConsolidatorQueryTool` on the database of the session
-that has just ended.
+A phase with `sql_probe` also holds the `query` tool of `consolidator_query_tool` on the
+database of the session that has just ended.
 """
 
 import logging
@@ -16,14 +16,15 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, Field
 
 from project_module.agent.context import ArmContext
-from project_module.agent.session import QUERY_TOOL, CombinedToolSet
+from project_module.agent.session import CombinedToolSet, QueryTool
 from project_module.config import ArmName, Budgets
-from project_module.contracts import ConsolidationRecord, TaskEnv, ToolCall, ToolSet
+from project_module.contracts import ConsolidationRecord, TaskEnv, ToolSet
 from project_module.llm.loop import ERROR_PREFIX, run_tool_loop
 from project_module.memory.lint import lint_store
 from project_module.memory.store import MemoryStore, false_notes_present
 from project_module.memory.tools import MAX_READ_RESULT_TOKENS, FileToolset
 from project_module.prompts import render_prompt
+from project_module.tool_names import QUERY_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ MEMORY_MOUNT: Final = "memory"
 TRANSCRIPTS_MOUNT: Final = "transcripts"
 INJECTED_FILE: Final = "injected.md"
 NOTES_DIR: Final = "notes"
-# Queries one consolidation may run with `ConsolidatorQueryTool` (00_design §4.5).
+# Queries one consolidation may run with `consolidator_query_tool` (00_design §4.5).
 CONSOLIDATOR_MAX_QUERIES: Final = 10
 # A note retired by consolidation: its whole content is one line in one of these forms.
 _RETIRED_NOTE: Final = re.compile(r"\A(?:MOVED TO|MERGED INTO)\b[^\n]*\Z")
@@ -82,70 +83,36 @@ def prompt_values(budgets: Budgets) -> dict[str, int]:
     }
 
 
-class ConsolidatorQueryTool(ToolSet):
+def consolidator_query_tool(
+    env: TaskEnv, session: int, *, max_queries: int = CONSOLIDATOR_MAX_QUERIES
+) -> QueryTool:
     """The `query(sql)` tool of a consolidation phase, on the session that has just ended.
 
     Queries run like the agent's (`env.run_query(session, sql)`, with the same row and time
     limits) on the database of `session`, never on a later one. At most `max_queries` are run
-    per instance; later attempts are not run and return an `ERROR:` text. Calls without a
-    usable `sql` argument are rejected without counting.
+    per tool; later attempts are not run and return an `ERROR:` text. Calls without a usable
+    `sql` argument are rejected without counting.
 
-    Parameters
-    ----------
-    env
-        The task environment that runs the queries.
-    session
-        The session that has just ended.
-    max_queries
-        Queries this instance may run.
+    Raises
+    ------
+    ValueError
+        If `max_queries` is below 1.
     """
-
-    def __init__(
-        self, env: TaskEnv, session: int, *, max_queries: int = CONSOLIDATOR_MAX_QUERIES
-    ) -> None:
-        if max_queries < 1:
-            raise ValueError("max_queries must be at least 1")
-        self._env = env
-        self._session = session
-        self._max_queries = max_queries
-        self.attempts = 0
-
-    def schemas(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": QUERY_TOOL,
-                    "description": (
-                        "Run one read-only SQL statement against the database as it is in the "
-                        "session that has just ended, and return the result as text, or an "
-                        "error message starting with `ERROR:`. Long results are cut to a row "
-                        "limit, so use aggregates, filters or LIMIT. You may run at most "
-                        f"{self._max_queries} queries in this run; further calls are not run."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "sql": {"type": "string", "description": "The SQL statement to run."}
-                        },
-                        "required": ["sql"],
-                        "additionalProperties": False,
-                    },
-                },
-            }
-        ]
-
-    def dispatch(self, call: ToolCall) -> str:
-        sql = call.arguments.get("sql")
-        if not isinstance(sql, str) or not sql.strip():
-            return f"{ERROR_PREFIX} 'sql' must be a non-empty string."
-        self.attempts += 1
-        if self.attempts > self._max_queries:
-            return (
-                f"{ERROR_PREFIX} query limit reached ({self._max_queries} per consolidation); "
-                "the query was not run."
-            )
-        return self._env.run_query(self._session, sql)
+    if max_queries < 1:
+        raise ValueError("max_queries must be at least 1")
+    return QueryTool(
+        env,
+        session,
+        max_queries=max_queries,
+        description=(
+            "Run one read-only SQL statement against the database as it is in the "
+            "session that has just ended, and return the result as text, or an "
+            "error message starting with `ERROR:`. Long results are cut to a row "
+            "limit, so use aggregates, filters or LIMIT. You may run at most "
+            f"{max_queries} queries in this run; further calls are not run."
+        ),
+        limit_error=f"query limit reached ({max_queries} per consolidation); the query was not run.",
+    )
 
 
 class _ConsolidationCounter:
@@ -209,7 +176,7 @@ def run_consolidation(
     All phases together may use at most `budgets.consolidation.max_input_tokens_per_run`
     input tokens: each phase gets what the earlier ones left. Afterwards the store is linted
     and searched for the stream's false notes (marker or claim), and the record says whether
-    `injected.md` changed. Phases with `sql_probe` also get `ConsolidatorQueryTool` on
+    `injected.md` changed. Phases with `sql_probe` also get `consolidator_query_tool` on
     `session`; one instance, and so one query limit, serves every such phase of the run. The
     record counts reads of live notes and executed queries over all phases.
 
@@ -234,7 +201,7 @@ def run_consolidation(
     stops: list[str] = []
     counter = _ConsolidationCounter(memory)
     query_tool = (
-        ConsolidatorQueryTool(ctx.env, session) if any(p.sql_probe for p in phases) else None
+        consolidator_query_tool(ctx.env, session) if any(p.sql_probe for p in phases) else None
     )
     for phase in phases:
         mounts = {MEMORY_MOUNT: memory}

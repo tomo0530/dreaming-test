@@ -507,6 +507,28 @@ def test_a1_review_has_notes_fragments_only_with_session_notes(
     assert ("`MERGED INTO summary.md`" in prompt) is session_notes
 
 
+# The shared note rule of notes_handling.md: a statement no evidence settles stays, tagged.
+UNSETTLED_NOTE_RULE = (
+    "No evidence settles it: keep it tagged `(unverified)`, and never present it as verified."
+)
+
+
+def test_a1_and_a4_keep_unsettled_note_statements_tagged_unverified(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path, session_notes=True)
+    review, _ = RollingSummaryArm().phases(ctx)
+    analyzer, _ = VerifiedDreamingArm().phases(ctx)
+
+    a1, a4 = (
+        render_prompt(phase.prompt_files, prompt_values(ctx.config.budgets))
+        for phase in (review, analyzer)
+    )
+
+    assert UNSETTLED_NOTE_RULE in a1 and UNSETTLED_NOTE_RULE in a4
+    # A1 carries such statements into summary.md, as A4's organizer carries them into the wiki.
+    assert "one that no evidence settles tagged `(unverified)`" in a1
+    assert "Do not merge" not in a1
+
+
 @pytest.mark.parametrize(
     ("session_notes", "consolidator_sql"),
     [(False, False), (True, False), (False, True), (True, True)],

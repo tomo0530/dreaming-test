@@ -27,7 +27,11 @@ exclude = [
     "__pycache__",
     # The plan's code blocks are signature sketches with aligned comments, not code to format.
     "docs/plan",
+    # ruff formats Python code blocks inside Markdown; docs are written by hand, not formatted.
+    "*.md",
 ]
+# Apply `exclude` also to paths passed explicitly, e.g. `make fix docs/followup/x.md`.
+force-exclude = true
 
 [lint]
 select = [

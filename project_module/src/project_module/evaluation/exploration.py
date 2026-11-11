@@ -14,9 +14,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from project_module.agent.session import QUERY_TOOL
 from project_module.llm.loop import ERROR_PREFIX
 from project_module.schemadrift.models import SESSIONS_PER_EPOCH, Stream
+from project_module.tool_names import QUERY_TOOL
 
 # Names the generator gives the code lookup table; exactly one exists in each stream.
 REFERENCE_TABLE_CANDIDATES = ("ref_codes", "code_lookup", "lkp_values")

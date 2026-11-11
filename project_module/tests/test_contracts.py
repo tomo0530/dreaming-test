@@ -322,7 +322,7 @@ FOLLOWUP_EXPECTED: dict[str, _Expected] = {
         list(range(4001, 4021)),
         25,
         _VERIFY,
-        concurrency=4,
+        concurrency=2,
     ),
     "fu_probe": _Expected(
         "fu_aux",
@@ -349,7 +349,7 @@ FOLLOWUP_EXPECTED: dict[str, _Expected] = {
         list(range(3, 18)),
         6,
         {name: ExperimentConfig.model_fields[name].default for name in SCHEMADRIFT_SWITCHES},
-        concurrency=4,
+        concurrency=2,
     ),
     "fu_sens": _Expected(
         "fu_aux",
@@ -409,8 +409,8 @@ def test_followup_configs_load_and_match_design(name: str) -> None:
         assert config.concurrency == expected.concurrency
 
 
-def test_main_runs_share_a_concurrency_budget_of_24() -> None:
-    names = ["fu_fb0", "fu_fb1", "fu_verify", "fu_probe", "fu_null"]
+def test_runs_started_together_share_a_concurrency_budget_of_24() -> None:
+    names = ["fu_fb0", "fu_fb1", "fu_verify", "fu_probe", "fu_null", "fu_clbench"]
 
     assert sum(_followup(name).concurrency for name in names) == 24
 
@@ -452,7 +452,8 @@ def test_fu_clbench_matches_the_previous_clbench_run_except_streams_and_phase() 
 
     config = _followup("fu_clbench")
 
-    ignored = ("name", "phase", "stream_ids", "seeds")
+    # Concurrency only schedules jobs; it does not change any result.
+    ignored = ("name", "phase", "stream_ids", "seeds", "concurrency")
     assert _without(config, *ignored) == _without(previous, *ignored)
     assert set(config.stream_ids).isdisjoint(previous.stream_ids)
 

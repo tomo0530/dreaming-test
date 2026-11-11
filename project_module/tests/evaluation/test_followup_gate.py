@@ -383,16 +383,36 @@ def _write_main_config(path: Path, config: ExperimentConfig) -> None:
     path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
 
 
-def _gate_argv(run_dirs: Mapping[str, Path], ledger: Path, tmp_path: Path) -> list[str]:
-    main_config = tmp_path / "fu_fb0.yaml"
-    _write_main_config(
-        main_config, _main_config("fu_fb0", "fu_main", ["A0", "A4"], ["fu-01"], 52.0)
-    )
+# Main configurations of the five pilot labels, valid for the gate unless a test overrides one.
+MAIN_CONFIGS: dict[str, ExperimentConfig] = {
+    "fb0": _main_config("fu_fb0", "fu_main", ["A0", "A4"], ["fu-01", "fu-02"], 52.0),
+    "fb1": _main_config("fu_fb1", "fu_main", ["A0", "A4"], ["fu-01", "fu-02"], 52.0),
+    "verify": _main_config("fu_verify", "fu_aux", ["A0", "A4"], ["fu-01"], 25.0),
+    "probe": _main_config("fu_probe", "fu_aux", ["A4"], ["fu-02"], 25.0),
+    "null": _main_config("fu_null", "fu_aux", ["A1", "A4"], ["fu-null-01"], 25.0),
+}
+
+
+def _main_config_argv(tmp_path: Path, configs: Mapping[str, ExperimentConfig]) -> list[str]:
+    argv: list[str] = []
+    for label, config in configs.items():
+        path = tmp_path / f"main-{label}.yaml"
+        _write_main_config(path, config)
+        argv.append(f"--main-config={label}={path}")
+    return argv
+
+
+def _gate_argv(
+    run_dirs: Mapping[str, Path],
+    ledger: Path,
+    tmp_path: Path,
+    configs: Mapping[str, ExperimentConfig] = MAIN_CONFIGS,
+) -> list[str]:
     argv = [f"--run={label}={run_dir}" for label, run_dir in run_dirs.items()]
     return [
         *argv,
         "--gate",
-        f"--main-config=fb0={main_config}",
+        *_main_config_argv(tmp_path, configs),
         f"--streams={tmp_path / 'streams'}",
         f"--ledger={ledger}",
         f"--out={tmp_path / 'out'}",
@@ -403,10 +423,12 @@ def test_script_gate_passes_with_valid_streams(
     script: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run_dirs, ledger = _write_pilot(tmp_path, Pilot())
-    for seed, stream_id in enumerate(
-        (*DEFAULT_STREAMS, *PILOT_STREAMS["null"], "fu-01"), start=4501
-    ):
+    for seed, stream_id in enumerate((*DEFAULT_STREAMS, "fu-01", "fu-02"), start=4501):
         generate_stream(stream_id, seed, tmp_path / "streams" / stream_id, inject=False)
+    for seed, stream_id in enumerate((*PILOT_STREAMS["null"], "fu-null-01"), start=4601):
+        generate_stream(
+            stream_id, seed, tmp_path / "streams" / stream_id, inject=False, drift=False
+        )
 
     code = script.main(_gate_argv(run_dirs, ledger, tmp_path))
 
@@ -450,3 +472,45 @@ def test_script_rejects_bad_arguments(script: ModuleType, argv: list[str]) -> No
         script.main(argv)
 
     assert exit_info.value.code == 2
+
+
+def _with(label: str, **update: Any) -> dict[str, ExperimentConfig]:
+    return MAIN_CONFIGS | {label: MAIN_CONFIGS[label].model_copy(update=update)}
+
+
+@pytest.mark.parametrize(
+    ("configs", "message"),
+    [
+        ({k: v for k, v in MAIN_CONFIGS.items() if k != "probe"}, "missing: probe"),
+        (MAIN_CONFIGS | {"sens": MAIN_CONFIGS["verify"]}, "unexpected: sens"),
+        (_with("fb1", phase="fu_aux"), "fb1 must be phase fu_main"),
+        (_with("null", phase="fu_main"), "null must be phase fu_aux"),
+        (_with("verify", stream_ids=["fu-03"], seeds=[4003]), "verify streams"),
+        (_with("probe", stream_ids=["fu-01", "fu-03"], seeds=[4001, 4003]), "probe streams"),
+        (_with("fb1", stream_ids=["fu-01"], seeds=[4001]), "fb1 streams"),
+    ],
+    ids=[
+        "missing-label",
+        "extra-label",
+        "fb1-wrong-phase",
+        "null-wrong-phase",
+        "verify-not-subset",
+        "probe-not-subset",
+        "fb1-not-equal",
+    ],
+)
+def test_script_gate_rejects_main_configs_that_do_not_match_the_design(
+    script: ModuleType,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    configs: dict[str, ExperimentConfig],
+    message: str,
+) -> None:
+    run_dirs, ledger = _write_pilot(tmp_path, Pilot())
+
+    with pytest.raises(SystemExit) as exit_info:
+        script.main(_gate_argv(run_dirs, ledger, tmp_path, configs))
+
+    assert exit_info.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not (tmp_path / "out" / "followup-gate.json").exists()

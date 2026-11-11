@@ -80,6 +80,21 @@ ARM_DIFFERENCES: tuple[tuple[Condition, Condition], ...] = (
     ((FB1, "A2"), (FB1, "A0")),
     ((FB0, "A5"), (FB0, "A0")),
 )
+# Each family of comparisons with the condition groups its metrics pair; a group is compared
+# over the streams every one of its conditions completed.
+COMPARISON_FAMILIES: dict[str, tuple[tuple[Condition, ...], ...]] = {
+    "primary": (PRIMARY_CONDITIONS,),
+    "a2": (((FB0, "A2"), (FB0, "A0")), ((FB1, "A2"), (FB1, "A0"))),
+    "a5": (((FB0, "A5"), (FB0, "A0")),),
+    "verify": tuple(
+        (("verify", arm), (FB0, arm), ("verify", "A0"), (FB0, "A0")) for arm in ("A1", "A4")
+    ),
+    "probe": ((("probe", "A4"), (FB0, "A4")),),
+    "null": tuple(((label, "A1"), (label, "A4")) for label in ("null", FB0)),
+    "sens": tuple(
+        (("sens", "A4"), ("sens", control), (FB0, "A4"), (FB0, control)) for control in ("A1", "A0")
+    ),
+}
 SESSION_BANDS: dict[str, range] = {"s1-4": range(1, 5), "s5-8": range(5, 9), "s9-12": range(9, 13)}
 CLBENCH_ARMS = ("A0", "A1", "A4")
 # Per-question exploration indicators (20_preregistration 4).
@@ -137,6 +152,27 @@ def common_streams(runs: Mapping[str, RunData], conds: Sequence[Condition]) -> l
     ]
 
 
+# An unfinished job: (reason, condition, stream).
+_Unfinished = tuple[str, Condition, str]
+
+
+def _unfinished(runs: Mapping[str, RunData], conds: Sequence[Condition]) -> set[_Unfinished]:
+    return {
+        (state, cond, stream_id)
+        for stream_id in _universe(runs, conds)
+        for cond in conds
+        if (state := _data(runs, cond).status.get(job_key(stream_id, cond[1]), NOT_STARTED))
+        != "completed"
+    }
+
+
+def _count_unfinished(jobs: set[_Unfinished]) -> dict[str, dict[str, int]]:
+    counts: dict[str, Counter[str]] = defaultdict(Counter)
+    for reason, cond, _ in jobs:
+        counts[reason][condition_label(cond)] += 1
+    return {reason: dict(sorted(by.items())) for reason, by in sorted(counts.items())}
+
+
 def exclusions(
     runs: Mapping[str, RunData], conds: Sequence[Condition]
 ) -> dict[str, dict[str, int]]:
@@ -144,13 +180,20 @@ def exclusions(
 
     A job that never started is counted under `not_started`. Zero counts are left out.
     """
-    counts: dict[str, Counter[str]] = defaultdict(Counter)
-    for stream_id in _universe(runs, conds):
-        for cond in conds:
-            state = _data(runs, cond).status.get(job_key(stream_id, cond[1]), NOT_STARTED)
-            if state != "completed":
-                counts[state][condition_label(cond)] += 1
-    return {reason: dict(sorted(by.items())) for reason, by in sorted(counts.items())}
+    return _count_unfinished(_unfinished(runs, conds))
+
+
+def family_exclusions(
+    runs: Mapping[str, RunData], groups: Sequence[Sequence[Condition]]
+) -> dict[str, dict[str, int]] | None:
+    """`exclusions` over every group of a comparison family, each unfinished job counted once.
+
+    Groups with a condition that no run holds are skipped; None when every group is.
+    """
+    present = [g for g in groups if all(_has_condition(runs, cond) for cond in g)]
+    if not present:
+        return None
+    return _count_unfinished(set().union(*(_unfinished(runs, g) for g in present)))
 
 
 def condition_scores(
@@ -472,7 +515,8 @@ def _behaviour(inputs: _Inputs, cond: Condition, streams: Sequence[str]) -> dict
     metrics: dict[str, PerStream] = {name: {} for name in BEHAVIOUR_METRICS}
     for stream_id, rows in by_stream.items():
         found = [inputs.features[(label, stream_id, arm, r.qid)] for r in rows]
-        metrics["queries_per_question"][stream_id] = fmean(r.queries for r in rows)
+        # Successful queries only (20_preregistration 4); attempts include errors and refusals.
+        metrics["queries_per_question"][stream_id] = fmean(r.ok_queries for r in rows)
         metrics["unfiltered_ref_query_rate"][stream_id] = fmean(
             float(f.unfiltered_ref_query) for f in found
         )
@@ -783,6 +827,10 @@ def summarize_followup(
         "bootstrap": {"seed": FOLLOWUP_BOOTSTRAP_SEED, "resamples": BOOTSTRAP_RESAMPLES},
         "runs": {label: run_dir.name for label, run_dir in run_dirs.items()},
         "primary": _primary(inputs),
+        "excluded": {
+            family: family_exclusions(runs, groups)
+            for family, groups in COMPARISON_FAMILIES.items()
+        },
         "secondary": _secondary(inputs),
         "exploratory": {
             "arm_differences": {

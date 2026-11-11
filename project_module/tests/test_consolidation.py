@@ -14,10 +14,11 @@ from project_module.agent.memory_arms import (
     RollingSummaryArm,
     VerifiedDreamingArm,
 )
+from project_module.agent.session import QueryTool
 from project_module.config import Budgets, ConsolidationBudget, ExperimentConfig
 from project_module.consolidation import (
-    ConsolidatorQueryTool,
     PhaseSpec,
+    consolidator_query_tool,
     prompt_values,
     run_consolidation,
 )
@@ -588,13 +589,13 @@ class _RecordingEnv:
         return "n\n1"
 
 
-def _query(tool: ConsolidatorQueryTool, arguments: dict[str, Any]) -> str:
+def _query(tool: QueryTool, arguments: dict[str, Any]) -> str:
     return tool.dispatch(ToolCall(id="c", name="query", arguments=arguments))
 
 
 def test_consolidator_query_limit() -> None:
     env = _RecordingEnv()
-    tool = ConsolidatorQueryTool(env, 3)
+    tool = consolidator_query_tool(env, 3)
 
     rejected = _query(tool, {"sql": " "})
     results = [_query(tool, {"sql": f"SELECT {i}"}) for i in range(11)]
