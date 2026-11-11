@@ -402,8 +402,8 @@ def test_e2e_fake_no_drift_stream(tmp_path): ...
 
 ### R1: 実装一式の最終レビュー
 
-- [ ] Opus xhigh サブエージェントと Codex gpt-6.1-sol xhigh に、`main..feature/followup-harness` の差分を並行でレビューさせる。対象範囲として、T0〜T6、00_design §4・§7、本計画の Review Focus を明示する。
-- [ ] 指摘を反映し、両者の APPROVE を得てから PR を作り、マージする。
+- [x] Opus xhigh サブエージェントと Codex gpt-6.1-sol xhigh に、`main..feature/followup-harness` の差分を並行でレビューさせる。対象範囲として、T0〜T6、00_design §4・§7、本計画の Review Focus を明示する。
+- [x] 指摘を反映し、両者の APPROVE を得てから PR を作り、マージする。
 
 ---
 

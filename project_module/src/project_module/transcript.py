@@ -2,8 +2,9 @@
 
 A transcript is evidence for later consolidation, so it records what the agent saw and did
 but never system prompts, injected memory, or what memory and transcript-search tools
-returned. It holds no grading or gold answers except the task's own feedback events, which the
-agent saw: CL-Bench's, and SchemaDrift's with `feedback: graded`.
+returned. It holds no grading or gold answers except the task's own feedback events (CL-Bench's,
+and SchemaDrift's with `feedback: graded`), written after grading and never shown to the online
+agent.
 """
 
 import json
