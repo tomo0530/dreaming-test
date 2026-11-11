@@ -97,6 +97,9 @@ class ScriptedArm:
         self.tool_requests += 1
         return None if self._tools is None else self._tools(ctx)
 
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
+
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self.online_tools(ctx, session)
 

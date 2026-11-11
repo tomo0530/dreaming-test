@@ -11,12 +11,24 @@ import pytest
 import yaml
 from fakes import FakeLLM, FakeTransport, text_reply, tool_reply
 from project_module.agent.context import StopSignal
-from project_module.config import ArmName, Budgets, ExperimentConfig, OnlineBudget, load_models
-from project_module.contracts import ChatResult, CostTag, QuestionResult, ToolChoice
+from project_module.config import (
+    SCHEMADRIFT_SWITCHES,
+    ArmName,
+    Budgets,
+    ExperimentConfig,
+    OnlineBudget,
+    load_models,
+)
+from project_module.contracts import ChatResult, CostTag, Grade, QuestionResult, ToolChoice
 from project_module.layout import RunLayout
 from project_module.llm.ledger import CostLedger
 from project_module.llm.metered import MeteredClient
-from project_module.manifest import config_sha256, load_manifest
+from project_module.manifest import (
+    LATER_DEFAULTED_FIELDS,
+    config_sha256,
+    load_manifest,
+    matches_config,
+)
 from project_module.memory.store import MemoryStore, false_notes_present
 from project_module.runner import (
     InvalidStreamError,
@@ -38,6 +50,10 @@ MODELS = REPO / "configs" / "models.yaml"
 RUN_ID = "run-test"
 
 Observer = Callable[[CostTag, list[dict[str, Any]]], None]
+
+
+class _StopGeneration(Exception):
+    """Raised by a stand-in generator to end `generate_streams` once the call is seen."""
 
 
 class RunnerLLM(FakeLLM):
@@ -367,6 +383,68 @@ def test_make_env_rejects_a_stream_that_does_not_match_the_config(tmp_path: Path
             )
 
 
+@pytest.mark.parametrize(
+    ("config_drift", "stream_drift"),
+    [(False, True), (True, False)],
+    ids=["no-drift-config", "drift-config"],
+)
+def test_make_env_rejects_drift_mismatch(
+    tmp_path: Path, config_drift: bool, stream_drift: bool
+) -> None:
+    config = _small_config("drift", ["d-01"], [20])
+    generate_streams(config, tmp_path / "streams")
+    stream_file = tmp_path / "streams" / "d-01" / "stream.json"
+    data = json.loads(stream_file.read_text(encoding="utf-8"))
+    stream_file.write_text(json.dumps({**data, "drift": stream_drift}), encoding="utf-8")
+    # `model_copy` skips validation, which is what lets a config disagree with its stream.
+    mismatched = config.model_copy(update={"drift": config_drift})
+
+    with pytest.raises(ValueError, match="d-01: drift is"):
+        make_env(
+            mismatched,
+            "d-01",
+            20,
+            streams_root=tmp_path / "streams",
+            clbench_root=tmp_path / "none",
+        )
+
+
+@pytest.mark.parametrize(
+    ("feedback", "expected_line"),
+    [("graded", "Question 1: CORRECT!"), ("none", None)],
+)
+def test_make_env_passes_the_feedback_switch(
+    tmp_path: Path, feedback: str, expected_line: str | None
+) -> None:
+    config = _small_config("fb", ["f-01"], [20], feedback=feedback)
+    generate_streams(config, tmp_path / "streams")
+    env, _ = make_env(
+        config, "f-01", 20, streams_root=tmp_path / "streams", clbench_root=tmp_path / "none"
+    )
+
+    line = env.feedback(env.questions_for(1)[0], Grade(category="correct", score=1.0))
+
+    assert line == expected_line
+
+
+def test_generate_streams_requests_the_configured_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requested: list[bool] = []
+
+    def record_and_stop(*_: Any, drift: bool, **__: Any) -> None:
+        requested.append(drift)
+        raise _StopGeneration
+
+    monkeypatch.setattr("project_module.runner.generate_stream", record_and_stop)
+    config = _small_config("nodrift", ["n-01"], [20]).model_copy(update={"drift": False})
+
+    with pytest.raises(_StopGeneration):
+        generate_streams(config, tmp_path / "streams")
+
+    assert requested == [False]
+
+
 def test_generate_streams_refuses_invalid_stream(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -505,7 +583,7 @@ def test_interrupt_stops_jobs_records_interrupted_and_releases_the_lock(
 def test_config_digest_of_the_default_timing_matches_manifests_written_before_the_field() -> None:
     config = _config(inject_false_notes=True)
     legacy_digest = hashlib.sha256(
-        config.model_dump_json(exclude={"false_note_timing"}).encode("utf-8")
+        config.model_dump_json(exclude=set(LATER_DEFAULTED_FIELDS)).encode("utf-8")
     ).hexdigest()
 
     assert config_sha256(config) == legacy_digest
@@ -524,7 +602,43 @@ def test_resume_accepts_the_full_dump_digest_recorded_by_earlier_code(tmp_path: 
     run_dir = run_experiment(config, client=RunnerLLM(), **kwargs)
     manifest_path = run_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["config_sha256"] = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
+    manifest["config_sha256"] = _d71c2f4_digest(config)
     manifest_path.write_text(json.dumps(manifest))
 
     assert run_experiment(config, client=RunnerLLM(), resume=run_dir, **kwargs) == run_dir
+
+
+def _d71c2f4_digest(config: ExperimentConfig) -> str:
+    """The digest commit d71c2f4 wrote: every field it knew, `false_note_timing` included."""
+    dump = config.model_dump_json(exclude=set(SCHEMADRIFT_SWITCHES))
+    return hashlib.sha256(dump.encode("utf-8")).hexdigest()
+
+
+def test_old_manifests_still_match_after_new_fields() -> None:
+    config = _config(inject_false_notes=True)
+    first_study = hashlib.sha256(
+        config.model_dump_json(exclude=set(LATER_DEFAULTED_FIELDS)).encode("utf-8")
+    ).hexdigest()
+
+    assert matches_config(first_study, config)
+    assert matches_config(_d71c2f4_digest(config), config)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"feedback": "graded"},
+        {"session_notes": True},
+        {"a2_retrieval": "auto"},
+        {"agent_prompt_addendum": "verify_memory"},
+        {"consolidator_sql": True},
+        {"drift": False},
+    ],
+)
+def test_changed_switch_does_not_match_old_digest(update: dict[str, Any]) -> None:
+    config = _config(inject_false_notes=True)
+    changed = config.model_copy(update=update)
+
+    assert not matches_config(config_sha256(config), changed)
+    assert not matches_config(_d71c2f4_digest(config), changed)
+    assert matches_config(config_sha256(changed), changed)

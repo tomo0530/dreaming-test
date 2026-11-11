@@ -1,0 +1,30 @@
+# Follow-up E1: no-drift plumbing check.
+name: fu_dev_null
+phase: fu_dev
+task: schemadrift
+arms: [A1, A4]
+stream_ids: [fu-dev-null-01]
+seeds: [4211]
+sessions: 12
+questions_per_session: 6
+inject_false_notes: false
+agent_model: gpt-6-luna
+consolidator_model: gpt-6-luna
+embedding_model: text-embedding-3-large
+agent_reasoning_effort: low
+consolidator_reasoning_effort: medium
+probe_sessions: [4, 8, 12]
+probes_per_checkpoint: 8
+feedback: none
+session_notes: true
+a2_retrieval: auto
+drift: false
+concurrency: 2
+budgets:
+  phase_cap_usd: 3
+  hard_cap_usd: 200.0
+  injected_tokens: 2000
+  max_input_tokens_per_call: 64000
+  online: {max_turns: 8, max_queries: 8, max_completion_tokens: 2048, memory_read_tokens: 6000, sql_row_limit: 50,
+    sql_timeout_s: 5.0}
+  consolidation: {analyzer_max_turns: 10, organizer_max_turns: 12, max_completion_tokens: 8192, max_input_tokens_per_run: 900000}

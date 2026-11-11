@@ -5,14 +5,23 @@ import pytest
 from fakes import FakeLLM, text_reply, tool_reply
 from project_module.agent.context import ArmContext
 from project_module.agent.memory_arms import (
+    ANALYZER_PROMPT,
+    CORE_PROMPT,
+    NOTES_HANDLING_PROMPT,
+    REVIEW_NOTES_PROMPT,
+    REVIEW_PROMPT,
+    REWRITE_PROMPT,
+    SQL_PROBE_PROMPT,
     OrganizeOnlyArm,
     RollingSummaryArm,
     VerifiedDreamingArm,
 )
 from project_module.config import Budgets, ExperimentConfig
+from project_module.consolidation import prompt_values
 from project_module.contracts import ToolCall
 from project_module.layout import RunLayout
 from project_module.memory.store import MemoryStore
+from project_module.prompts import render_prompt
 from project_module.schemadrift.models import Fact, InjectedNote, Stream
 from project_module.tool_names import MEMORY_WRITE_TOOL
 
@@ -66,6 +75,8 @@ def _make_ctx(
     sessions: int = 12,
     with_memory: bool = True,
     transcripts: dict[int, str] | None = None,
+    session_notes: bool = False,
+    consolidator_sql: bool = False,
 ) -> ArmContext:
     transcripts_dir = tmp_path / "transcripts"
     transcripts_dir.mkdir()
@@ -82,6 +93,8 @@ def _make_ctx(
         consolidator_model="consolidator-model",
         embedding_model="embedding-model",
         budgets=Budgets(phase_cap_usd=1.0),
+        session_notes=session_notes,
+        consolidator_sql=consolidator_sql,
     )
     stream = Stream(
         stream_id=STREAM_ID,
@@ -247,6 +260,20 @@ def test_memory_arms_consolidate_after_earlier_sessions(
     assert (record.stream_id, record.arm, record.session) == (STREAM_ID, arm.name, 2)
     assert record.phases == phases
     assert len(llm.calls) == len(phases)
+
+
+def test_a1_gets_notes_write_only_with_session_notes(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path, session_notes=True)
+    arm = RollingSummaryArm()
+
+    names = _tool_names(arm, ctx, probe=False)
+
+    assert names == {"memory_read", "memory_search", MEMORY_WRITE_TOOL}
+    assert _write_note(arm, ctx, "notes/s02-q1.md").startswith("OK")
+    assert _write_note(arm, ctx, "summary.md").startswith("ERROR")
+    assert _write_note(arm, ctx, "injected.md").startswith("ERROR")
+    assert _memory(ctx).glob("**/*") == ["notes/s02-q1.md"]
+    assert _tool_names(arm, ctx, probe=True) == {"memory_read", "memory_search"}
 
 
 def test_a1_online_tools_are_read_only(tmp_path: Path) -> None:
@@ -462,3 +489,113 @@ def _tool_results_seen(llm: FakeLLM, *, call_index: int) -> str:
     """The tool results the model saw at the start of call `call_index`, joined."""
     messages = llm.calls[call_index]["messages"]
     return "\n".join(str(m["content"]) for m in messages if m["role"] == "tool")
+
+
+@pytest.mark.parametrize("session_notes", [False, True], ids=["default", "notes"])
+def test_a1_review_has_notes_fragments_only_with_session_notes(
+    tmp_path: Path, session_notes: bool
+) -> None:
+    ctx = _make_ctx(tmp_path, session_notes=session_notes)
+
+    review, rewrite = RollingSummaryArm().phases(ctx)
+
+    fragments = [NOTES_HANDLING_PROMPT, REVIEW_NOTES_PROMPT] if session_notes else []
+    assert review.prompt_files == [CORE_PROMPT, REVIEW_PROMPT, *fragments]
+    assert rewrite.prompt_files == [REWRITE_PROMPT]
+    assert not review.sql_probe and not rewrite.sql_probe
+    prompt = render_prompt(review.prompt_files, prompt_values(ctx.config.budgets))
+    assert ("`MERGED INTO summary.md`" in prompt) is session_notes
+
+
+# The shared note rule of notes_handling.md: a statement no evidence settles stays, tagged.
+UNSETTLED_NOTE_RULE = (
+    "No evidence settles it: keep it tagged `(unverified)`, and never present it as verified."
+)
+
+
+def test_a1_and_a4_keep_unsettled_note_statements_tagged_unverified(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path, session_notes=True)
+    review, _ = RollingSummaryArm().phases(ctx)
+    analyzer, _ = VerifiedDreamingArm().phases(ctx)
+
+    a1, a4 = (
+        render_prompt(phase.prompt_files, prompt_values(ctx.config.budgets))
+        for phase in (review, analyzer)
+    )
+
+    assert UNSETTLED_NOTE_RULE in a1 and UNSETTLED_NOTE_RULE in a4
+    # A1 carries such statements into summary.md, as A4's organizer carries them into the wiki.
+    assert "one that no evidence settles tagged `(unverified)`" in a1
+    assert "Do not merge" not in a1
+
+
+@pytest.mark.parametrize(
+    ("session_notes", "consolidator_sql"),
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["default", "notes", "sql", "notes+sql"],
+)
+def test_a4_analyzer_gets_query_tool_only_with_consolidator_sql(
+    tmp_path: Path, session_notes: bool, consolidator_sql: bool
+) -> None:
+    llm = FakeLLM([text_reply("done"), text_reply("done")])
+    ctx = _make_ctx(
+        tmp_path,
+        llm,
+        transcripts={2: TRANSCRIPT_3},
+        session_notes=session_notes,
+        consolidator_sql=consolidator_sql,
+    )
+    arm = VerifiedDreamingArm()
+
+    analyzer, organizer = arm.phases(ctx)
+    arm.after_session(ctx, 2)
+
+    fragments = [NOTES_HANDLING_PROMPT] if session_notes else []
+    fragments += [SQL_PROBE_PROMPT] if consolidator_sql else []
+    assert analyzer.prompt_files == [CORE_PROMPT, ANALYZER_PROMPT, *fragments]
+    assert analyzer.sql_probe is consolidator_sql
+    assert organizer.prompt_files == ["organizer.md"] and not organizer.sql_probe
+    analyzer_tools, organizer_tools = (
+        {t["function"]["name"] for t in call["tools"]} for call in llm.calls
+    )
+    assert ("query" in analyzer_tools) is consolidator_sql
+    assert "query" not in organizer_tools
+
+
+def test_a1_scripted_review_merges_a_corroborated_note_and_retires_it(tmp_path: Path) -> None:
+    note = "notes/s03-q1.md"
+    summary = "## order_status\n- order_status code 3 means shipped (verified s3)\n"
+    llm = FakeLLM(
+        [
+            # review: transcript, summary and the note list, then the note itself
+            tool_reply(
+                ("read_file", {"path": "transcripts/session_003.txt", "limit": 200}),
+                ("glob", {"pattern": "memory/notes/*.md"}),
+            ),
+            tool_reply(("read_file", {"path": f"memory/{note}"})),
+            tool_reply(
+                ("write_file", {"path": "memory/summary.md", "content": summary}),
+                ("write_file", {"path": f"memory/{note}", "content": "MERGED INTO summary.md\n"}),
+            ),
+            text_reply("Merged one note."),
+            # rewrite
+            tool_reply(("write_file", {"path": "memory/injected.md", "content": INJECTED})),
+            text_reply("Rewrote injected.md."),
+        ]
+    )
+    ctx = _make_ctx(tmp_path, llm, transcripts={3: TRANSCRIPT_3}, session_notes=True)
+    _memory(ctx).write(note, "- order_status code 3 is shipped (seen in a query)\n")
+
+    record = RollingSummaryArm().after_session(ctx, 3)
+
+    assert record is not None
+    assert record.stopped == "summarizer_review:final;summarizer_rewrite:final"
+    assert record.notes_files_read == 1
+    assert record.lint_problems == []
+    assert _memory(ctx).read_all(note) == "MERGED INTO summary.md\n"
+    assert all(
+        not str(m["content"]).startswith("ERROR")
+        for call in llm.calls
+        for m in call["messages"]
+        if m["role"] == "tool"
+    )

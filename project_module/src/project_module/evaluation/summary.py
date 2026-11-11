@@ -156,7 +156,7 @@ def _exploratory(
     return {name: found[1] for name, found in comparisons.items() if found is not None}
 
 
-def _mean_or_none(values: Iterable[float]) -> float | None:
+def mean_or_none(values: Iterable[float]) -> float | None:
     values = list(values)
     return fmean(values) if values else None
 
@@ -170,37 +170,37 @@ def _arm_summary(
     probes = [p for p in data.probes if p.arm == arm and p.stream_id in analyzed]
     return {
         "n_streams": len(accuracy_by_stream),
-        "accuracy": _mean_or_none(accuracy_by_stream.values()),
+        "accuracy": mean_or_none(accuracy_by_stream.values()),
         "accuracy_ci": (
             paired_bootstrap(list(accuracy_by_stream.values())).model_dump()
             if accuracy_by_stream
             else None
         ),
-        "score": _mean_or_none(per_stream_score(data, arm, analyzed).values()),
-        "accuracy_q_inj": _mean_or_none(
+        "score": mean_or_none(per_stream_score(data, arm, analyzed).values()),
+        "accuracy_q_inj": mean_or_none(
             per_stream_accuracy(data, arm, analyzed, where=lambda r: r.injected_target).values()
         ),
-        "accuracy_q_natural": _mean_or_none(
+        "accuracy_q_natural": mean_or_none(
             per_stream_accuracy(data, arm, analyzed, where=lambda r: not r.injected_target).values()
         ),
         "session_accuracy": {str(k): v for k, v in session_accuracy(data, arm, analyzed).items()},
-        "error_breakdown": _error_breakdown(rows),
+        "error_breakdown": error_breakdown(rows),
         "stale_rate": _stale_rate(rows),
         "stale_rate_drift_dependent": _stale_rate(drift_rows),
-        "probe_accuracy": _mean_or_none(float(p.correct) for p in probes),
-        "probe_accuracy_injected": _mean_or_none(float(p.correct) for p in probes if p.injected),
+        "probe_accuracy": mean_or_none(float(p.correct) for p in probes),
+        "probe_accuracy_injected": mean_or_none(float(p.correct) for p in probes if p.injected),
         "false_note": _false_note(data, arm, analyzed, streams),
-        **_arm_cost(data, arm, analyzed, correct_answers=sum(r.correct for r in rows)),
+        **arm_cost(data, arm, analyzed, correct_answers=sum(r.correct for r in rows)),
     }
 
 
-def _error_breakdown(rows: Sequence[QuestionResult]) -> dict[str, int]:
+def error_breakdown(rows: Sequence[QuestionResult]) -> dict[str, int]:
     counts = Counter(r.category for r in rows)
     return {category: counts[category] for category in _CATEGORIES}
 
 
 def _stale_rate(rows: Sequence[QuestionResult]) -> float | None:
-    return _mean_or_none(float(r.category == "stale") for r in rows)
+    return mean_or_none(float(r.category == "stale") for r in rows)
 
 
 def _false_note(
@@ -212,14 +212,14 @@ def _false_note(
     return {
         "injections": len(outcomes),
         "corrections": sum(o.corrected for o in outcomes),
-        "correction_rate": _mean_or_none(float(o.corrected) for o in outcomes),
-        "survival_rate": _mean_or_none(
+        "correction_rate": mean_or_none(float(o.corrected) for o in outcomes),
+        "survival_rate": mean_or_none(
             float(present) for o in outcomes for present in o.present_after
         ),
     }
 
 
-def _arm_cost(
+def arm_cost(
     data: RunData, arm: str, analyzed: Sequence[str], *, correct_answers: int
 ) -> dict[str, Any]:
     per_job = cost_per_stream_arm(data)
@@ -265,7 +265,7 @@ def mechanical_summary(data: RunData) -> dict[str, Any]:
     return {
         "n_results": len(data.results),
         "tool_call_success_rate": _tool_success_rate(data.results),
-        "no_submission_rate": _no_submission_rate(data.results),
+        "no_submission_rate": no_submission_rate(data.results),
         "consolidation": {
             "runs": len(data.consolidations),
             "lint_problems": sum(len(c.lint_problems) for c in data.consolidations),
@@ -287,12 +287,12 @@ def _tool_success_rate(rows: Sequence[QuestionResult]) -> float | None:
     return 1 - sum(r.tool_errors for r in rows) / calls if calls else None
 
 
-def _no_submission_rate(rows: Sequence[QuestionResult]) -> float | None:
-    return _mean_or_none(float(r.category == "no_submission") for r in rows)
+def no_submission_rate(rows: Sequence[QuestionResult]) -> float | None:
+    return mean_or_none(float(r.category == "no_submission") for r in rows)
 
 
 def _injected_updated_rate(records: Sequence[ConsolidationRecord]) -> float | None:
-    return _mean_or_none(float(c.injected_updated) for c in records)
+    return mean_or_none(float(c.injected_updated) for c in records)
 
 
 def _mechanical_arm(data: RunData, arm: str) -> dict[str, Any]:
@@ -301,7 +301,7 @@ def _mechanical_arm(data: RunData, arm: str) -> dict[str, Any]:
     return {
         "n_results": len(rows),
         "tool_call_success_rate": _tool_success_rate(rows),
-        "no_submission_rate": _no_submission_rate(rows),
+        "no_submission_rate": no_submission_rate(rows),
         "lint_problems": sum(len(c.lint_problems) for c in consolidations),
         "consolidation_stopped": dict(Counter(c.stopped for c in consolidations)),
         "injected_updated_rate": _injected_updated_rate(consolidations),

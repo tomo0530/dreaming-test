@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from project_module.config import ExperimentConfig, Phase
+from project_module.config import SCHEMADRIFT_SWITCHES, ExperimentConfig, Phase
 from project_module.layout import RunLayout
 
 logger = logging.getLogger(__name__)
@@ -28,14 +28,26 @@ class RunManifest(BaseModel):
     input_sha256: dict[str, str]
 
 
+# Fields added after runs were recorded. Each joins the digest only when it differs from its
+# default, so the runs recorded before it existed keep their digest and can still be resumed.
+LATER_DEFAULTED_FIELDS: tuple[str, ...] = ("false_note_timing", *SCHEMADRIFT_SWITCHES)
+
+
+def _at_default(config: ExperimentConfig, name: str) -> bool:
+    return bool(getattr(config, name) == ExperimentConfig.model_fields[name].default)
+
+
+def _digest(config: ExperimentConfig, exclude: set[str]) -> str:
+    dump = config.model_dump_json(exclude=exclude or None)
+    return hashlib.sha256(dump.encode("utf-8")).hexdigest()
+
+
 def config_sha256(config: ExperimentConfig) -> str:
     """Digest of the validated configuration, independent of YAML layout and comments.
 
-    `false_note_timing` joins the digest only when it differs from its default, so the runs
-    recorded before the field existed keep their digest and can still be resumed.
+    Fields of `LATER_DEFAULTED_FIELDS` that are at their default are left out of the dump.
     """
-    exclude = {"false_note_timing"} if config.false_note_timing == "before_consolidation" else None
-    return hashlib.sha256(config.model_dump_json(exclude=exclude).encode("utf-8")).hexdigest()
+    return _digest(config, {name for name in LATER_DEFAULTED_FIELDS if _at_default(config, name)})
 
 
 def file_sha256(path: Path) -> str:
@@ -65,11 +77,15 @@ def git_state() -> tuple[str | None, bool | None]:
 def matches_config(digest: str, config: ExperimentConfig) -> bool:
     """Whether a manifest's `config_sha256` was computed from `config`.
 
-    Besides the current digest, this accepts the full-dump digest that commit `d71c2f4`
-    recorded while it also hashed `false_note_timing` at its default.
+    Besides the current digest, this accepts the digest that commit `d71c2f4` recorded: the
+    dump with `false_note_timing` at its default and without the follow-up switches. That
+    form is accepted only while every follow-up switch is at its default, so a config that
+    turns a switch on never matches a digest recorded before the switch existed.
     """
-    full_dump = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
-    return digest in {config_sha256(config), full_dump}
+    candidates = {config_sha256(config)}
+    if all(_at_default(config, name) for name in SCHEMADRIFT_SWITCHES):
+        candidates.add(_digest(config, set(SCHEMADRIFT_SWITCHES)))
+    return digest in candidates
 
 
 def write_manifest(layout: RunLayout, manifest: RunManifest) -> None:

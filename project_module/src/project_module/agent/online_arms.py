@@ -6,10 +6,10 @@ from typing import Final, Literal
 
 from project_module.agent.context import ArmContext
 from project_module.config import ArmName
-from project_module.contracts import ConsolidationRecord, ToolSet
+from project_module.contracts import ConsolidationRecord, TaskQuestion, ToolSet
 from project_module.memory.store import MemoryStore
 from project_module.memory.tools import MemoryReadTools
-from project_module.retrieval import HybridIndex, TranscriptSearchTools
+from project_module.retrieval import Chunk, HybridIndex, TranscriptSearchTools
 from project_module.schemadrift.models import Fact, InjectedNote, Stream
 from project_module.tokens import count_tokens
 
@@ -21,6 +21,8 @@ _ORACLE_HEADER: Final = "# Rules of the database that hold in this session"
 _ORACLE_OVERFLOW: Final = f"More rules are listed in `{FACTS_FILE}` (read it with memory_read)."
 _FACTS_HEADER: Final = "# Further rules of the database that hold in this session"
 _NO_FURTHER_FACTS: Final = f"(none: every rule is listed in `{INJECTED_FILE}`)"
+RETRIEVAL_HEADING: Final = "Relevant excerpts from past sessions:"
+RETRIEVAL_K: Final = 8
 
 
 class StatelessArm:
@@ -36,6 +38,9 @@ class StatelessArm:
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return None
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return None
@@ -55,8 +60,19 @@ def _require_index(ctx: ArmContext) -> HybridIndex:
     return ctx.index
 
 
+def _retrieval_context(chunks: Sequence[Chunk]) -> str:
+    excerpts = [f"[session {chunk.session}]\n{chunk.text}" for chunk in chunks]
+    return "\n\n".join([RETRIEVAL_HEADING, *excerpts])
+
+
 class RawRagArm:
-    """A2: every finished transcript is indexed; the agent searches them with `search_transcripts`."""
+    """A2: every finished transcript is indexed and searched for each question.
+
+    With `a2_retrieval == "tool"` the agent searches with `search_transcripts`. With `"auto"`
+    it has no search tool; instead the top hits for the question text are put before the
+    question, as many as fit `budgets.online.memory_read_tokens` together with the heading and
+    their session labels.
+    """
 
     name: ArmName = "A2"
 
@@ -67,7 +83,34 @@ class RawRagArm:
         return ""
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
+        if ctx.config.a2_retrieval == "auto":
+            return None
         return self._search_tools(ctx, session, "online")
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        if ctx.config.a2_retrieval != "auto":
+            return ""
+        budget = ctx.config.budgets.online.memory_read_tokens
+        chunks = _require_index(ctx).search(
+            question.text,
+            k=RETRIEVAL_K,
+            token_budget=budget,
+            tag=ctx.tag(self.name, question.session, "online"),
+        )
+        # The search budgets the excerpt texts only; drop trailing hits until the whole
+        # context, as `retrieved_tokens` counts it, fits.
+        keep = len(chunks)
+        while keep and count_tokens(_retrieval_context(chunks[:keep])) > budget:
+            keep -= 1
+        logger.debug(
+            "%s %s %s: %d of %d excerpts fit",
+            ctx.stream_id,
+            self.name,
+            question.qid,
+            keep,
+            len(chunks),
+        )
+        return _retrieval_context(chunks[:keep]) if keep else ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._search_tools(ctx, session, "probe")
@@ -147,6 +190,9 @@ class OracleArm:
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._read_tools(ctx)
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._read_tools(ctx)

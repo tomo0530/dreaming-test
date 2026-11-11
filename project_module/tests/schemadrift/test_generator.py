@@ -1,3 +1,4 @@
+import hashlib
 import re
 import sqlite3
 from pathlib import Path
@@ -9,6 +10,15 @@ from project_module.schemadrift.models import Stream
 from project_module.schemadrift.validate import validate_stream
 
 VALIDATION_SEEDS = [11, 23, 37, 41, 58]
+NO_DRIFT_SEEDS = range(4501, 4521)
+# SHA-256 of seed 4521 (inject=True) as generated before streams without drift existed.
+PINNED_SEED = 4521
+PINNED_STREAM_SHA256 = "e9b097005819c1572b807a7d736633e442b027fe3254bcecf11469737bf6eb5a"
+PINNED_DB_SHA256 = {
+    1: "8e014710f43149a1cf450b3d2e8ed6c261e0e47d5d2a40f5b53242f957de4005",
+    2: "e5cbf4fc412531560b91642b1a14e286789ebae3912d5741503e8997bb9c95c0",
+    3: "5c1b82c159a56ab58a8d8e01583dee515271467f1be528aa0672dceeb2122ee3",
+}
 
 
 def _dump(db_path: Path) -> str:
@@ -30,6 +40,22 @@ def _column_names(stream: Stream) -> set[str]:
         finally:
             conn.close()
     return names
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _schema_names(db_path: Path) -> dict[str, list[str]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master ORDER BY name")]
+        return {
+            table: [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+            for table in tables
+        }
+    finally:
+        conn.close()
 
 
 def test_generate_stream_is_deterministic(tmp_path: Path) -> None:
@@ -176,14 +202,59 @@ def test_generate_stream_rejects_unsupported_shapes(
         )
 
 
+def test_drift_default_is_unchanged(tmp_path: Path) -> None:
+    stream = generate_stream("s", PINNED_SEED, tmp_path, inject=True)
+
+    assert stream.drift
+    assert _sha256(tmp_path / STREAM_FILE) == PINNED_STREAM_SHA256
+    assert {e: _sha256(stream.db_path(e)) for e in PINNED_DB_SHA256} == PINNED_DB_SHA256
+
+
+def test_no_drift_stream_has_static_facts(tmp_path: Path) -> None:
+    stream = generate_stream("s", 4501, tmp_path, inject=True, drift=False)
+
+    assert not stream.drift
+    assert all(f.valid_from_session == 1 and f.valid_until_session is None for f in stream.facts)
+    assert not any(q.drift_dependent for q in stream.questions)
+    assert load_stream(tmp_path) == stream
+
+
+def test_no_drift_keeps_names_of_same_seed(tmp_path: Path) -> None:
+    drifting = generate_stream("s", 4502, tmp_path / "drift", inject=True)
+    static = generate_stream("s", 4502, tmp_path / "static", inject=True, drift=False)
+    epoch_one = _schema_names(drifting.db_path(1))
+
+    assert _dump(static.db_path(1)) == _dump(drifting.db_path(1))
+    assert all(_schema_names(static.db_path(e)) == epoch_one for e in (2, 3))
+    assert {(f.fact_id, f.subject, f.value) for f in static.facts} == {
+        (f.fact_id, f.subject, f.value) for f in drifting.facts if f.valid_at(1)
+    }
+
+
+def test_no_drift_stream_still_adds_rows(tmp_path: Path) -> None:
+    stream = generate_stream("s", 4503, tmp_path, inject=False, drift=False)
+    sizes = [len(_dump(stream.db_path(e))) for e in (1, 2, 3)]
+
+    assert sizes == sorted(sizes)
+    assert len(set(sizes)) == 3
+
+
+@pytest.mark.parametrize("seed", NO_DRIFT_SEEDS)
+def test_no_drift_streams_validate_for_many_seeds(tmp_path: Path, seed: int) -> None:
+    stream = generate_stream(f"s{seed}", seed, tmp_path, inject=True, drift=False)
+
+    assert validate_stream(stream) == []
+
+
 @pytest.mark.slow
-def test_many_seeds_pass_validation(tmp_path: Path) -> None:
+@pytest.mark.parametrize("drift", [True, False], ids=["drift", "no-drift"])
+def test_many_seeds_pass_validation(tmp_path: Path, drift: bool) -> None:
     failing = {
         seed: problems
         for seed in range(100)
         if (
             problems := validate_stream(
-                generate_stream("s", seed, tmp_path / str(seed), inject=True)
+                generate_stream("s", seed, tmp_path / str(seed), inject=True, drift=drift)
             )
         )
     }

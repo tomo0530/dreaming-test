@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from project_module.contracts import Grade, TaskQuestion
-from project_module.schemadrift.env import SchemaDriftEnv
+from project_module.contracts import Grade, GradeCategory, TaskQuestion
+from project_module.schemadrift.env import FEEDBACK_MAX_CHARS, FEEDBACK_MAX_ROWS, SchemaDriftEnv
 from project_module.schemadrift.models import Question, Stream
 
 
@@ -117,7 +117,6 @@ def test_env_grades_submissions_against_the_current_epoch(tmp_path: Path) -> Non
         category="correct", score=1.0
     )
     assert env.grade(question, None, queries_used=8).category == "no_submission"
-    assert env.feedback(question, Grade(category="correct", score=1.0)) is None
 
 
 def test_env_submit_tool_takes_one_sql_argument(tmp_path: Path) -> None:
@@ -129,3 +128,151 @@ def test_env_submit_tool_takes_one_sql_argument(tmp_path: Path) -> None:
     assert tool["function"]["name"] == "submit_sql"
     assert tool["function"]["parameters"]["required"] == [env.submit_param]
     assert (env.env_id, env.sessions, env.max_queries) == ("handmade", 8, 8)
+
+
+# --- graded feedback ---------------------------------------------------------------------------
+
+_CORRECT = Grade(category="correct", score=1.0)
+_TRUNCATION_MARK = "[truncated]"
+
+
+def _question(qid: str, session: int, expected_by_epoch: dict[int, list[list[Any]]]) -> Question:
+    return Question(
+        qid=qid,
+        session=session,
+        text=f"Text of {qid}",
+        ordered=False,
+        fact_ids=[],
+        drift_dependent=False,
+        injected_target=False,
+        gold_sql_by_epoch={epoch: "SELECT 1" for epoch in expected_by_epoch},
+        expected_by_epoch=expected_by_epoch,
+    )
+
+
+def _feedback_env(
+    tmp_path: Path, questions: list[Question], *, feedback: bool = True
+) -> SchemaDriftEnv:
+    """An env over hand-made questions; feedback never touches the epoch databases."""
+    stream = Stream(
+        stream_id="handmade",
+        seed=0,
+        root=tmp_path,
+        sessions=8,
+        questions_per_session=3,
+        questions=questions,
+        facts=[],
+        injections=[],
+    )
+    return SchemaDriftEnv(stream, row_limit=50, timeout_s=5.0, max_queries=8, feedback=feedback)
+
+
+def _question_seven(expected_by_epoch: dict[int, list[list[Any]]]) -> list[Question]:
+    """Three questions in each of sessions 1 and 2, then the one under test in session 5."""
+    earlier = [
+        _question(f"s{session:02d}q{index}", session, {1: [[0]], 2: [[0]]})
+        for session in (1, 2)
+        for index in (1, 2, 3)
+    ]
+    return [*earlier, _question("s05q1", 5, expected_by_epoch)]
+
+
+def _expected_block(text: str, label: str) -> str:
+    return text.split(f"{label}\n", 1)[1]
+
+
+def test_feedback_is_off_by_default(tmp_path: Path) -> None:
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: [[5]]}), feedback=False)
+
+    result = sut.feedback(sut.questions_for(5)[0], _CORRECT)
+
+    assert result is None
+
+
+def test_feedback_correct_line(tmp_path: Path) -> None:
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: [[5]]}))
+
+    result = sut.feedback(sut.questions_for(5)[0], _CORRECT)
+
+    assert result == "Question 7: CORRECT!"
+
+
+def test_feedback_numbers_questions_across_sessions(tmp_path: Path) -> None:
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: [[5]]}))
+
+    first = sut.feedback(sut.questions_for(1)[0], _CORRECT)
+    last_of_session_two = sut.feedback(sut.questions_for(2)[2], _CORRECT)
+
+    assert (first, last_of_session_two) == ("Question 1: CORRECT!", "Question 6: CORRECT!")
+
+
+@pytest.mark.parametrize("category", ["stale", "sql_error", "wrong_result"])
+def test_feedback_incorrect_lists_current_epoch_expected_rows(
+    tmp_path: Path, category: GradeCategory
+) -> None:
+    expected: dict[int, list[list[Any]]] = {
+        1: [[3]],
+        2: [[1, "a"], [2, None], ["x\ty", 2.5]],
+    }
+    sut = _feedback_env(tmp_path, _question_seven(expected))
+
+    result = sut.feedback(sut.questions_for(5)[0], Grade(category=category, score=0.0))
+
+    assert result == "Question 7: INCORRECT.\nCorrect answer:\n1 | a\n2 | NULL\nx\\ty | 2.5"
+
+
+def test_feedback_no_submission_wording(tmp_path: Path) -> None:
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: [[5]]}))
+
+    result = sut.feedback(sut.questions_for(5)[0], Grade(category="no_submission", score=0.0))
+
+    assert result == (
+        "Question 7: No answer was submitted within the limits — treated as incorrect.\n"
+        "The correct answer was:\n5"
+    )
+
+
+def test_feedback_marks_an_empty_expected_result(tmp_path: Path) -> None:
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: []}))
+
+    result = sut.feedback(sut.questions_for(5)[0], Grade(category="wrong_result", score=0.0))
+
+    assert result == "Question 7: INCORRECT.\nCorrect answer:\n(0 rows)"
+
+
+def test_feedback_keeps_at_most_twenty_rows(tmp_path: Path) -> None:
+    rows = [[f"r{i}", i] for i in range(1, 26)]
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: rows}))
+
+    result = sut.feedback(sut.questions_for(5)[0], Grade(category="wrong_result", score=0.0))
+
+    assert result is not None and FEEDBACK_MAX_ROWS == 20
+    assert _expected_block(result, "Correct answer:").splitlines() == [
+        *(f"r{i} | {i}" for i in range(1, 21)),
+        _TRUNCATION_MARK,
+    ]
+
+
+def test_feedback_drops_whole_rows_past_the_character_limit(tmp_path: Path) -> None:
+    rows = [["x" * 300] for _ in range(10)]
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: rows}))
+
+    result = sut.feedback(sut.questions_for(5)[0], Grade(category="wrong_result", score=0.0))
+
+    assert result is not None
+    block = _expected_block(result, "Correct answer:")
+    *kept, mark = block.splitlines()
+    assert mark == _TRUNCATION_MARK
+    assert 0 < len(kept) < 10 and all(line == "x" * 300 for line in kept)
+    assert len(block) <= FEEDBACK_MAX_CHARS
+
+
+def test_feedback_cuts_a_single_oversized_row(tmp_path: Path) -> None:
+    sut = _feedback_env(tmp_path, _question_seven({1: [[3]], 2: [["y" * 5000]]}))
+
+    result = sut.feedback(sut.questions_for(5)[0], Grade(category="wrong_result", score=0.0))
+
+    assert result is not None
+    block = _expected_block(result, "Correct answer:")
+    assert block.endswith(f"y\n{_TRUNCATION_MARK}")
+    assert len(block) <= FEEDBACK_MAX_CHARS

@@ -141,6 +141,10 @@ class QuestionResult(BaseModel):
     injected_target: bool
     # Markers of the false notes present in memory (marker or claim) when the question started.
     active_markers: list[str] = Field(default_factory=list)
+    # Follow-up only: whether the forced note turn left a non-empty note for this question.
+    note_written: bool = False
+    # Follow-up only: tokens of search hits the harness put before the question (A2 auto).
+    retrieved_tokens: int = 0
 
     @property
     def correct(self) -> bool:
@@ -170,6 +174,10 @@ class ConsolidationRecord(BaseModel):
     injected_markers_present: list[str] = Field(default_factory=list)
     # Whether this run left `injected.md` with different content than it found.
     injected_updated: bool
+    # Follow-up only: successful reads of live notes that returned at least one line of text.
+    notes_files_read: int = 0
+    # Follow-up only: database queries the consolidator ran without an error.
+    sql_queries: int = 0
 
 
 RunStatus = Literal["running", "completed", "budget_exhausted", "interrupted", "failed"]

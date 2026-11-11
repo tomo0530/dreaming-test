@@ -1,0 +1,32 @@
+# Follow-up E3: A4+probe; the analyzer queries the finished session's DB (exploratory).
+name: fu_probe
+phase: fu_aux
+task: schemadrift
+arms: [A4]
+stream_ids: [fu-01, fu-02, fu-03, fu-04, fu-05, fu-06, fu-07, fu-08, fu-09, fu-10, fu-11, fu-12, fu-13,
+  fu-14, fu-15, fu-16, fu-17, fu-18, fu-19, fu-20]
+seeds: [4001, 4002, 4003, 4004, 4005, 4006, 4007, 4008, 4009, 4010, 4011, 4012, 4013, 4014, 4015, 4016,
+  4017, 4018, 4019, 4020]
+sessions: 12
+questions_per_session: 6
+inject_false_notes: false
+agent_model: gpt-6-luna
+consolidator_model: gpt-6-luna
+embedding_model: text-embedding-3-large
+agent_reasoning_effort: low
+consolidator_reasoning_effort: medium
+probe_sessions: [4, 8, 12]
+probes_per_checkpoint: 8
+feedback: none
+session_notes: true
+a2_retrieval: auto
+consolidator_sql: true
+concurrency: 3
+budgets:
+  phase_cap_usd: 25
+  hard_cap_usd: 200.0
+  injected_tokens: 2000
+  max_input_tokens_per_call: 64000
+  online: {max_turns: 8, max_queries: 8, max_completion_tokens: 2048, memory_read_tokens: 6000, sql_row_limit: 50,
+    sql_timeout_s: 5.0}
+  consolidation: {analyzer_max_turns: 10, organizer_max_turns: 12, max_completion_tokens: 8192, max_input_tokens_per_run: 900000}

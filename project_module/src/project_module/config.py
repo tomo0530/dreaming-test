@@ -7,7 +7,21 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ArmName = Literal["A0", "A1", "A2", "A3", "A4", "A5"]
-Phase = Literal["test", "dev", "pilot", "pilot_inj", "pilot_rev", "main", "clbench"]
+Phase = Literal[
+    "test",
+    "dev",
+    "pilot",
+    "pilot_inj",
+    "pilot_rev",
+    "main",
+    "clbench",
+    "fu_dev",
+    "fu_pilot",
+    "fu_pilot_rev",
+    "fu_main",
+    "fu_aux",
+    "fu_clbench",
+]
 
 
 # Money must be a finite number: NaN compares false with every cap and would disable it.
@@ -52,6 +66,17 @@ class Budgets(_Frozen):
     hard_cap_usd: CapUsd = 200.0
 
 
+# Follow-up switches; non-default values are rejected for CL-Bench runs.
+SCHEMADRIFT_SWITCHES: tuple[str, ...] = (
+    "feedback",
+    "session_notes",
+    "a2_retrieval",
+    "agent_prompt_addendum",
+    "consolidator_sql",
+    "drift",
+)
+
+
 class ExperimentConfig(_Frozen):
     name: str
     phase: Phase
@@ -72,6 +97,20 @@ class ExperimentConfig(_Frozen):
     false_note_timing: Literal["before_consolidation", "after_consolidation"] = (
         "before_consolidation"
     )
+    # Follow-up switches (docs/followup/00_design.md 4). Their defaults reproduce the first
+    # study, and all of them apply to SchemaDrift only.
+    # `graded` writes each answer's grade and the expected result to the transcript only.
+    feedback: Literal["none", "graded"] = "none"
+    # Memory arms write one note per question in an extra forced turn after answering.
+    session_notes: bool = False
+    # `auto`: A2 gets no search tool; the harness prepends search hits to each question.
+    a2_retrieval: Literal["tool", "auto"] = "tool"
+    # `verify_memory` appends an instruction to verify remembered values to the agent prompt.
+    agent_prompt_addendum: Literal["none", "verify_memory"] = "none"
+    # A4's analyzer may query the database of the session that has just ended.
+    consolidator_sql: bool = False
+    # False for streams generated without migrations.
+    drift: bool = True
     agent_model: str
     consolidator_model: str
     embedding_model: str
@@ -89,6 +128,14 @@ class ExperimentConfig(_Frozen):
         unknown = set(self.arm_overrides) - set(self.stream_ids)
         if unknown:
             raise ValueError(f"arm_overrides refer to unknown streams: {sorted(unknown)}")
+        if self.task == "clbench":
+            changed = [
+                name
+                for name in SCHEMADRIFT_SWITCHES
+                if getattr(self, name) != type(self).model_fields[name].default
+            ]
+            if changed:
+                raise ValueError(f"SchemaDrift-only switches set for a CL-Bench run: {changed}")
         return self
 
     def arms_for(self, stream_id: str) -> list[ArmName]:

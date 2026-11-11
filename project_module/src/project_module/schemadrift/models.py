@@ -136,6 +136,14 @@ class Stream(BaseModel):
     questions: list[Question]
     facts: list[Fact]
     injections: list[InjectedNote]
+    # False for streams generated without migrations. Left out of `stream.json` when true, so
+    # the streams generated before the field existed keep their hash.
+    drift: bool = True
+
+    def stream_json(self) -> str:
+        """The text of `stream.json`: everything but `root`, and `drift` only when false."""
+        exclude = {"root", "drift"} if self.drift else {"root"}
+        return self.model_dump_json(indent=2, exclude=exclude) + "\n"
 
     def epoch_of(self, session: int) -> int:
         return (session - 1) // SESSIONS_PER_EPOCH + 1
