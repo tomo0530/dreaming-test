@@ -21,6 +21,8 @@ _ORACLE_HEADER: Final = "# Rules of the database that hold in this session"
 _ORACLE_OVERFLOW: Final = f"More rules are listed in `{FACTS_FILE}` (read it with memory_read)."
 _FACTS_HEADER: Final = "# Further rules of the database that hold in this session"
 _NO_FURTHER_FACTS: Final = f"(none: every rule is listed in `{INJECTED_FILE}`)"
+RETRIEVAL_HEADING: Final = "Relevant excerpts from past sessions:"
+RETRIEVAL_K: Final = 8
 
 
 class StatelessArm:
@@ -59,7 +61,12 @@ def _require_index(ctx: ArmContext) -> HybridIndex:
 
 
 class RawRagArm:
-    """A2: every finished transcript is indexed; the agent searches them with `search_transcripts`."""
+    """A2: every finished transcript is indexed and searched for each question.
+
+    With `a2_retrieval == "tool"` the agent searches with `search_transcripts`. With `"auto"`
+    it has no search tool; instead the top hits for the question text, within
+    `budgets.online.memory_read_tokens`, are put before the question.
+    """
 
     name: ArmName = "A2"
 
@@ -70,10 +77,26 @@ class RawRagArm:
         return ""
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
+        if ctx.config.a2_retrieval == "auto":
+            return None
         return self._search_tools(ctx, session, "online")
 
     def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
-        return ""
+        if ctx.config.a2_retrieval != "auto":
+            return ""
+        chunks = _require_index(ctx).search(
+            question.text,
+            k=RETRIEVAL_K,
+            token_budget=ctx.config.budgets.online.memory_read_tokens,
+            tag=ctx.tag(self.name, question.session, "online"),
+        )
+        logger.debug(
+            "%s %s %s: %d excerpts retrieved", ctx.stream_id, self.name, question.qid, len(chunks)
+        )
+        if not chunks:
+            return ""
+        excerpts = [f"[session {chunk.session}]\n{chunk.text}" for chunk in chunks]
+        return "\n\n".join([RETRIEVAL_HEADING, *excerpts])
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._search_tools(ctx, session, "probe")

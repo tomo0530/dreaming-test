@@ -108,6 +108,27 @@ def test_validate_detects_migration_without_semantic_change(tmp_path: Path) -> N
     assert "migration before session 5 has no semantic change" in problems
 
 
+def test_validate_skips_migration_checks_without_drift(tmp_path: Path) -> None:
+    static = generate_stream("s", 23, tmp_path, inject=True, drift=False)
+
+    relabelled = validate_stream(static.model_copy(update={"drift": True}))
+
+    assert validate_stream(static) == []
+    assert "migration before session 5 has no DDL-visible change" in relabelled
+    assert _has(relabelled, "sessions 5-8", "drift-dependent")
+
+
+def test_validate_detects_changing_fact_in_stream_without_drift(tmp_path: Path) -> None:
+    stream = _generate(tmp_path)
+    migrating = next(f for f in stream.facts if f.valid_from_session == 5)
+
+    problems = validate_stream(stream.model_copy(update={"drift": False}))
+
+    assert _has(problems, migrating.fact_id, "stream without drift")
+    assert not _has(problems, "migration before session")
+    assert not _has(problems, "are drift-dependent")
+
+
 def test_validate_detects_duplicate_markers(tmp_path: Path) -> None:
     stream = _generate(tmp_path)
     first, second = stream.injections

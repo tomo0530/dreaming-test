@@ -6,6 +6,11 @@ rewrites `injected.md`. A3 (organize-only) and A4 (verified dreaming) keep a wik
 notes the online agent writes under `notes/`; A3 only organizes it, A4 first verifies it
 against the session's transcript. A1's two phases mirror A4's analyzer and organizer: the same
 turns, transcript access, core prompt, input budget and reasoning effort.
+
+Follow-up switches add to this, and leave it unchanged when off: with `session_notes`, A1's
+agent may also write notes under `notes/`, and A1's review and A4's analyzer get the shared
+notes rule (A1's review also merges the notes into `summary.md` and retires them); with
+`consolidator_sql`, A4's analyzer may query the database of the session that has just ended.
 """
 
 import logging
@@ -15,7 +20,7 @@ from pathlib import PurePosixPath
 from typing import Final
 
 from project_module.agent.context import Arm, ArmContext
-from project_module.config import ArmName, ConsolidationBudget
+from project_module.config import ArmName, ConsolidationBudget, ExperimentConfig
 from project_module.consolidation import (
     INJECTED_FILE,
     LintProfile,
@@ -38,6 +43,10 @@ REVIEW_PROMPT: Final = "rolling_review.md"
 REWRITE_PROMPT: Final = "rolling_rewrite.md"
 ANALYZER_PROMPT: Final = "analyzer_verify.md"
 ORGANIZER_PROMPT: Final = "organizer.md"
+# Fragments appended after an arm's prompts when a follow-up switch is on.
+NOTES_HANDLING_PROMPT: Final = "notes_handling.md"
+REVIEW_NOTES_PROMPT: Final = "rolling_review_notes.md"
+SQL_PROBE_PROMPT: Final = "consolidator_sql_addendum.md"
 
 _NOT_SLUG: Final = re.compile(r"[^a-z0-9]+")
 _NOTE_NAME_WORDS: Final = 6
@@ -52,8 +61,8 @@ class _MemoryArm(Arm, ABC):
     notes_prefix: str | None
 
     @abstractmethod
-    def phases(self, budget: ConsolidationBudget) -> list[PhaseSpec]:
-        """The consolidation phases this arm runs after a session, in order."""
+    def phases(self, ctx: ArmContext) -> list[PhaseSpec]:
+        """The consolidation phases this arm runs after a session, in order, for `ctx.config`."""
 
     def setup(self, ctx: ArmContext) -> None:
         require_memory(ctx)
@@ -63,7 +72,7 @@ class _MemoryArm(Arm, ABC):
         return memory.read_all(INJECTED_FILE) if memory.exists(INJECTED_FILE) else ""
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet:
-        return self._memory_tools(ctx, writable_prefix=self.notes_prefix)
+        return self._memory_tools(ctx, writable_prefix=self._online_notes_prefix(ctx.config))
 
     def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
         return ""
@@ -84,9 +93,13 @@ class _MemoryArm(Arm, ABC):
             ctx,
             self.name,
             session=session,
-            phases=self.phases(ctx.config.budgets.consolidation),
+            phases=self.phases(ctx),
             lint_profile=self.lint_profile,
         )
+
+    def _online_notes_prefix(self, config: ExperimentConfig) -> str | None:
+        """Where the online agent may write notes under `config`; None for nowhere."""
+        return self.notes_prefix
 
     @staticmethod
     def _memory_tools(ctx: ArmContext, *, writable_prefix: str | None) -> ToolSet:
@@ -102,13 +115,16 @@ class RollingSummaryArm(_MemoryArm):
 
     name: ArmName = "A1"
     lint_profile: LintProfile = "summary"
+    # Without `session_notes`; with it, the agent writes one note per question under `notes/`.
     notes_prefix = None
 
-    def phases(self, budget: ConsolidationBudget) -> list[PhaseSpec]:
+    def phases(self, ctx: ArmContext) -> list[PhaseSpec]:
+        budget = ctx.config.budgets.consolidation
+        notes = [NOTES_HANDLING_PROMPT, REVIEW_NOTES_PROMPT] if ctx.config.session_notes else []
         return [
             PhaseSpec(
                 name="summarizer_review",
-                prompt_files=[CORE_PROMPT, REVIEW_PROMPT],
+                prompt_files=[CORE_PROMPT, REVIEW_PROMPT, *notes],
                 max_turns=budget.analyzer_max_turns,
                 transcripts_readable=True,
             ),
@@ -119,6 +135,9 @@ class RollingSummaryArm(_MemoryArm):
                 transcripts_readable=False,
             ),
         ]
+
+    def _online_notes_prefix(self, config: ExperimentConfig) -> str | None:
+        return NOTES_PREFIX if config.session_notes else self.notes_prefix
 
     def inject_false_note(
         self, ctx: ArmContext, note: InjectedNote, *, expose: bool = False
@@ -165,8 +184,8 @@ class OrganizeOnlyArm(_WikiArm):
 
     name: ArmName = "A3"
 
-    def phases(self, budget: ConsolidationBudget) -> list[PhaseSpec]:
-        return [_organizer_phase(budget)]
+    def phases(self, ctx: ArmContext) -> list[PhaseSpec]:
+        return [_organizer_phase(ctx.config.budgets.consolidation)]
 
 
 class VerifiedDreamingArm(_WikiArm):
@@ -174,13 +193,18 @@ class VerifiedDreamingArm(_WikiArm):
 
     name: ArmName = "A4"
 
-    def phases(self, budget: ConsolidationBudget) -> list[PhaseSpec]:
+    def phases(self, ctx: ArmContext) -> list[PhaseSpec]:
+        config = ctx.config
+        budget = config.budgets.consolidation
+        fragments = [NOTES_HANDLING_PROMPT] if config.session_notes else []
+        fragments += [SQL_PROBE_PROMPT] if config.consolidator_sql else []
         return [
             PhaseSpec(
                 name="analyzer",
-                prompt_files=[CORE_PROMPT, ANALYZER_PROMPT],
+                prompt_files=[CORE_PROMPT, ANALYZER_PROMPT, *fragments],
                 max_turns=budget.analyzer_max_turns,
                 transcripts_readable=True,
+                sql_probe=config.consolidator_sql,
             ),
             _organizer_phase(budget),
         ]

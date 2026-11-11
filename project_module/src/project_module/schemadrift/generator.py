@@ -565,12 +565,14 @@ def _derangement(rng: random.Random, codes: Mapping[_Status, int]) -> dict[_Stat
             return dict(zip(codes, shuffled, strict=True))
 
 
-def _make_design(rng: random.Random) -> _Design:
+def _make_design(rng: random.Random, *, drift: bool) -> _Design:
     names = {slot: rng.choice(options) for slot, options in sorted(_NAME_CHOICES.items())}
+    # Drawn even without drift, so every later draw (codes, units, formats) matches the seed.
     visible = rng.sample(["column_name", "join_key", "stale_table"], 2)
     semantic = rng.sample(["unit", "status_code", "soft_delete"], 2)
+    change_epoch = {visible[0]: 2, semantic[0]: 2, visible[1]: 3, semantic[1]: 3} if drift else {}
     migrations = _Migrations(
-        change_epoch={visible[0]: 2, semantic[0]: 2, visible[1]: 3, semantic[1]: 3},
+        change_epoch=change_epoch,
         renamed_column=rng.choice(("customer_region", "order_placed")),
     )
     order_time: TimeFormat = rng.choice(("unix", "iso", "yyyymmdd"))
@@ -1840,17 +1842,19 @@ def _leaf_slot(session: int, leaves: tuple[str, str], inject: bool) -> _Slot | N
 def _plan_slots(stream: Stream, leaves: tuple[str, str], inject: bool) -> list[list[_Slot]]:
     plan: list[list[_Slot]] = []
     per_session = stream.questions_per_session
+    # Without drift there is no migration to depend on or to prime.
+    prime: _Role = "prime" if stream.drift else "any"
     for session in range(1, stream.sessions + 1):
         epoch = stream.epoch_of(session)
-        drift = per_session // 2 + 1 if epoch > 1 else 0
-        slots = [_Slot(session, "drift" if drift else "prime", integration=True)]
+        drift = per_session // 2 + 1 if stream.drift and epoch > 1 else 0
+        slots = [_Slot(session, "drift" if drift else prime, integration=True)]
         slots += [_Slot(session, "drift") for _ in range(drift - 1)]
         leaf = _leaf_slot(session, leaves, inject)
         if leaf is not None:
             slots.append(leaf)
-        # One more question primes the next migration; the rest are unconstrained.
+        # With drift, one more question primes the next migration; the rest are unconstrained.
         open_slots = per_session - len(slots)
-        slots += [_Slot(session, "prime" if i == 0 else "any") for i in range(open_slots)]
+        slots += [_Slot(session, prime if i == 0 else "any") for i in range(open_slots)]
         plan.append(slots)
     return plan
 
@@ -1913,6 +1917,9 @@ class _Selector:
         )
 
     def _try(self, slot: _Slot, variant: _Variant) -> _Draft | None:
+        if slot.role in ("drift", "prime") and not self.stream.drift:
+            # No question could ever fill it; the slot plan is wrong, not the catalog.
+            raise RuntimeError(f"a stream without drift has no {slot.role} slots")
         epoch = self.stream.epoch_of(slot.session)
         query = variant.query
         keys = query.keys(self.schemas[epoch])
@@ -2083,7 +2090,9 @@ def generate_stream(
         Whether to add the two false notes (after sessions 3 and 7). The questions
         are the same either way; only `injections` and `injected_target` differ.
     drift
-        False generates a stream without migrations (`Stream.drift` is false).
+        False generates a stream without migrations (`Stream.drift` is false): every
+        epoch keeps the epoch-1 schema, names and codes of the same seed, while each
+        epoch still adds rows. No question is drift-dependent.
 
     Raises
     ------
@@ -2093,8 +2102,6 @@ def generate_stream(
     RuntimeError
         If no question satisfies a slot's constraints (a generator defect).
     """
-    if not drift:
-        raise NotImplementedError("streams without drift are not generated yet")
     if not 1 <= sessions <= _MAX_SESSIONS:
         raise ValueError(f"sessions must be between 1 and {_MAX_SESSIONS}")
     if questions_per_session < _MIN_QUESTIONS_PER_SESSION:
@@ -2113,7 +2120,7 @@ def generate_stream(
         drift=drift,
     )
     world = _make_world(random.Random(f"{seed}:world"))
-    design = _make_design(random.Random(f"{seed}:design"))
+    design = _make_design(random.Random(f"{seed}:design"), drift=drift)
     epochs = range(1, skeleton.epoch_of(sessions) + 1)
     schemas = {epoch: _schema(design, epoch) for epoch in epochs}
     views = {epoch: _view(world, _EPOCH_CUTOFFS[epoch]) for epoch in epochs}

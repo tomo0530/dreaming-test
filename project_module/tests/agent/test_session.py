@@ -7,7 +7,9 @@ from fakes import FakeLLM, text_reply, tool_reply
 from project_module.agent.context import ArmContext, StopRequested
 from project_module.agent.online_arms import RawRagArm
 from project_module.agent.session import CombinedToolSet, QueryTool, run_session
+from project_module.config import ExperimentConfig
 from project_module.contracts import ChatResult, CostTag, ToolCall, ToolSet
+from project_module.llm import ContentFiltered
 from project_module.llm.ledger import BudgetExceeded
 from project_module.memory.tools import MemoryReadTools
 from project_module.prompts import load_prompt
@@ -358,3 +360,333 @@ def test_a2_transcript_and_index_never_hold_retrieved_passages(tmp_path: Path) -
         if chunk.session == 2
     ]
     assert indexed and all(retrieved not in text for text in indexed)
+
+
+VERIFY_ADDENDUM = (
+    "Treat any memory shown above as hypotheses from past sessions, not as facts: the "
+    "database may have changed since they were written. Before you submit, query the current "
+    "contents of every lookup or code table and every flag column your answer depends on, "
+    "without filtering by remembered code sets."
+)
+NOTE_TOOL_CHOICE = {"type": "function", "name": "memory_write"}
+
+
+def _notes_config(**updates: Any) -> ExperimentConfig:
+    return make_config(**updates).model_copy(update={"session_notes": True})
+
+
+def _writable_memory_tools(ctx: ArmContext) -> ToolSet:
+    assert ctx.memory is not None
+    return MemoryReadTools(ctx.memory, token_budget=500, writable_prefix="notes/")
+
+
+def _note(path: str, content: str = "- orders.amount is in cents (verified).") -> ChatResult:
+    return tool_reply(("memory_write", {"path": path, "content": content}))
+
+
+def _note_ctx(
+    tmp_path: Path, client: FakeLLM, env: FakeEnv, *, config: ExperimentConfig | None = None
+) -> ArmContext:
+    return make_ctx(tmp_path, client=client, env=env, config=config or _notes_config())
+
+
+def _unanswered_call_ids(messages: list[dict[str, Any]]) -> list[str]:
+    """Ids of assistant tool calls that no tool message answers before the next turn."""
+    unanswered: list[str] = []
+    pending: list[str] = []
+    for message in messages:
+        if message["role"] == "tool":
+            pending = [i for i in pending if i != message["tool_call_id"]]
+            continue
+        unanswered.extend(pending)
+        pending = [c["id"] for c in message.get("tool_calls") or []]
+    return unanswered + pending
+
+
+class _FailingNoteClient(FakeLLM):
+    """Replays the script, but raises `error` on the forced note turn."""
+
+    def __init__(self, script: list[ChatResult], error: Exception) -> None:
+        super().__init__(script)
+        self._error = error
+
+    def chat(self, **kwargs: Any) -> ChatResult:
+        if kwargs.get("tool_choice") == NOTE_TOOL_CHOICE:
+            raise self._error
+        return super().chat(**kwargs)
+
+
+def test_note_turn_writes_note_after_submit(tmp_path: Path) -> None:
+    client = FakeLLM([_query("SELECT 1"), _submit(), _note("notes/s01-q1.md")])
+    ctx = _note_ctx(tmp_path, client, FakeEnv([question("q1")]))
+
+    [result] = run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    assert result.note_written is True
+    assert result.category == "correct"
+    assert ctx.memory is not None
+    assert ctx.memory.read_all("notes/s01-q1.md") == "- orders.amount is in cents (verified)."
+    note_call = client.calls[-1]
+    assert note_call["tool_choice"] == NOTE_TOOL_CHOICE
+    assert note_call["max_completion_tokens"] == 1024
+    assert "notes/s01-q1.md" in note_call["messages"][-1]["content"]
+    assert client.tags[-1].component == "online"
+
+
+def test_note_turn_closes_all_unanswered_calls(tmp_path: Path) -> None:
+    same_reply = tool_reply(("submit_sql", {"sql": GOLD_SQL}), ("query", {"sql": "SELECT 9"}))
+    client = FakeLLM([same_reply, _note("notes/s01-q1.md")])
+    env = FakeEnv([question("q1")])
+    ctx = _note_ctx(tmp_path, client, env)
+
+    run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    sent = client.calls[-1]["messages"]
+    assert _unanswered_call_ids(sent) == []
+    assert sent[-3:-1] == [
+        {"role": "tool", "tool_call_id": "call_0", "content": "Submitted."},
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "Not executed: the question is closed.",
+        },
+    ]
+    assert env.executed == []
+
+
+def test_note_turn_runs_after_no_submission(tmp_path: Path) -> None:
+    client = FakeLLM([_query("SELECT 1"), _query("SELECT 2"), _note("notes/s01-q1.md")])
+    ctx = _note_ctx(tmp_path, client, FakeEnv([question("q1")]), config=_notes_config(max_turns=2))
+
+    [result] = run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    assert result.category == "no_submission"
+    assert result.note_written is True
+    assert len(client.calls) == 3
+    assert _unanswered_call_ids(client.calls[-1]["messages"]) == []
+
+
+def _read_only_memory_tools(ctx: ArmContext) -> ToolSet:
+    return _memory_tools(ctx)
+
+
+@pytest.mark.parametrize(
+    ("arm_name", "tools", "session_notes"),
+    [
+        ("A0", None, True),
+        ("A1", _read_only_memory_tools, True),
+        ("A1", _writable_memory_tools, False),
+    ],
+    ids=["no-tools", "read-only-memory", "notes-switched-off"],
+)
+def test_note_turn_skipped_without_memory_write_tool(
+    tmp_path: Path, arm_name: Any, tools: Any, session_notes: bool
+) -> None:
+    client = FakeLLM([_submit(), _note("notes/s01-q1.md")])
+    config = make_config().model_copy(update={"session_notes": session_notes})
+    ctx = make_ctx(
+        tmp_path, client=client, env=FakeEnv([question("q1")]), arm=arm_name, config=config
+    )
+
+    [result] = run_session(ScriptedArm(arm_name, tools=tools), ctx, 1)
+
+    assert len(client.calls) == 1
+    assert result.note_written is False
+
+
+def test_note_turn_content_filter_is_recorded_not_raised(tmp_path: Path) -> None:
+    client = _FailingNoteClient([_submit()], ContentFiltered("blocked"))
+    ctx = _note_ctx(tmp_path, client, FakeEnv([question("q1")]))
+
+    [result] = run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    assert result.note_written is False
+    assert result.category == "correct"
+
+
+def test_note_turn_propagates_budget_exceeded(tmp_path: Path) -> None:
+    client = _FailingNoteClient([_submit()], BudgetExceeded("phase cap reached"))
+    env = FakeEnv([question("q1")])
+    ctx = _note_ctx(tmp_path, client, env)
+
+    with pytest.raises(BudgetExceeded):
+        run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+
+def test_notes_of_one_session_do_not_overwrite(tmp_path: Path) -> None:
+    client = FakeLLM(
+        [
+            _submit(),
+            _note("notes/s03-q1.md", "note one"),
+            _submit(),
+            _note("notes/s03-q2.md", "note two"),
+        ]
+    )
+    env = FakeEnv([question("q1", 3), question("q2", 3)])
+    ctx = _note_ctx(tmp_path, client, env)
+
+    results = run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 3)
+
+    assert [r.note_written for r in results] == [True, True]
+    assert "notes/s03-q1.md" in client.calls[1]["messages"][-1]["content"]
+    assert "notes/s03-q2.md" in client.calls[3]["messages"][-1]["content"]
+    assert ctx.memory is not None
+    assert ctx.memory.read_all("notes/s03-q1.md") == "note one"
+    assert ctx.memory.read_all("notes/s03-q2.md") == "note two"
+
+
+def test_note_written_is_false_when_the_note_goes_elsewhere(tmp_path: Path) -> None:
+    client = FakeLLM([_submit(), _note("notes/other.md")])
+    ctx = _note_ctx(tmp_path, client, FakeEnv([question("q1")]))
+
+    [result] = run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    assert result.note_written is False
+
+
+def test_note_turn_not_counted_in_result_tool_calls(tmp_path: Path) -> None:
+    # The note write fails (outside notes/), so it would show up as a tool error if counted.
+    client = FakeLLM([_query("SELECT 1"), _submit(), _note("wiki/elsewhere.md")])
+    ctx = _note_ctx(tmp_path, client, FakeEnv([question("q1")]))
+
+    [result] = run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    assert len(client.calls) == 3
+    assert (result.tool_calls, result.tool_errors, result.turns) == (1, 0, 2)
+    assert "TOOL RESULT (memory_write) [error]:" in _transcript(ctx, "A1", 1)
+
+
+def test_note_turn_sends_same_tool_schemas_as_answer_loop(tmp_path: Path) -> None:
+    client = FakeLLM([_query("SELECT 1"), _submit(), _note("notes/s01-q1.md")])
+    ctx = _note_ctx(tmp_path, client, FakeEnv([question("q1")]))
+
+    run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    names = [t["function"]["name"] for t in client.calls[-1]["tools"]]
+    assert names == ["query", "memory_read", "memory_search", "memory_write", "submit_sql"]
+    assert client.calls[-1]["tools"] == client.calls[0]["tools"]
+    assert client.calls[-1]["messages"][0] == client.calls[0]["messages"][0]
+
+
+@pytest.mark.parametrize("arm_name", ["A0", "A1", "A4"])
+def test_feedback_never_reaches_agent_messages(tmp_path: Path, arm_name: Any) -> None:
+    env = FakeEnv(
+        [question("q1"), question("q2")],
+        feedback_text="Question 1: INCORRECT.\nCorrect answer: 42",
+    )
+    if arm_name == "A0":
+        script = [_submit("SELECT 2"), _submit()]
+        arm = ScriptedArm("A0")
+    else:
+        script = [
+            _submit("SELECT 2"),
+            _note("notes/s01-q1.md"),
+            _submit(),
+            _note("notes/s01-q2.md"),
+        ]
+        arm = ScriptedArm(arm_name, tools=_writable_memory_tools)
+    client = FakeLLM(script)
+    ctx = _note_ctx(tmp_path, client, env)
+
+    run_session(arm, ctx, 1)
+
+    assert "EVENT feedback:" in _transcript(ctx, arm_name, 1)
+    assert len(client.calls) == len(script)
+    for call in client.calls:
+        sent = str(call["messages"])
+        assert "CORRECT" not in sent
+        assert "Correct answer" not in sent
+
+
+def test_feedback_line_written_after_note(tmp_path: Path) -> None:
+    env = FakeEnv([question("q1")], feedback_text="Question 1: CORRECT!")
+    client = FakeLLM([_submit(), _note("notes/s01-q1.md")])
+    ctx = _note_ctx(tmp_path, client, env)
+
+    run_session(ScriptedArm(tools=_writable_memory_tools), ctx, 1)
+
+    text = _transcript(ctx, "A1", 1)
+    assert "TOOL CALL memory_write:" in text
+    assert text.index("TOOL CALL memory_write:") < text.index("EVENT feedback:")
+
+
+def _verify_config() -> ExperimentConfig:
+    return make_config().model_copy(update={"agent_prompt_addendum": "verify_memory"})
+
+
+def test_verify_addendum_text_is_the_fixed_design_text() -> None:
+    assert load_prompt("agent_verify_addendum.md") == VERIFY_ADDENDUM
+
+
+def test_verify_addendum_follows_memory_block(tmp_path: Path) -> None:
+    client = FakeLLM([_submit()])
+    ctx = make_ctx(tmp_path, client=client, env=FakeEnv([question("q1")]), config=_verify_config())
+
+    run_session(ScriptedArm(injected="REMEMBERED-RULE"), ctx, 1)
+
+    system = client.calls[0]["messages"][0]["content"]
+    assert system.endswith("</memory>\n\n" + VERIFY_ADDENDUM)
+    assert system.index("REMEMBERED-RULE") < system.index(VERIFY_ADDENDUM)
+
+
+def test_verify_addendum_follows_the_base_prompt_without_memory(tmp_path: Path) -> None:
+    client = FakeLLM([_submit()])
+    ctx = make_ctx(
+        tmp_path,
+        client=client,
+        env=FakeEnv([question("q1")]),
+        arm="A0",
+        with_memory=False,
+        config=_verify_config(),
+    )
+
+    run_session(ScriptedArm("A0"), ctx, 1)
+
+    expected = load_prompt("agent_system.md") + "\n\n" + VERIFY_ADDENDUM
+    assert client.calls[0]["messages"][0]["content"] == expected
+
+
+def test_verify_addendum_is_absent_by_default(tmp_path: Path) -> None:
+    client = FakeLLM([_submit()])
+    ctx = make_ctx(tmp_path, client=client, env=FakeEnv([question("q1")]))
+
+    run_session(ScriptedArm(injected="REMEMBERED-RULE"), ctx, 1)
+
+    assert VERIFY_ADDENDUM not in client.calls[0]["messages"][0]["content"]
+
+
+def _auto_rag_session_2(tmp_path: Path, text: str) -> tuple[ArmContext, FakeLLM, list[Any]]:
+    """Run A2 with automatic retrieval for session 1 (indexed) and session 2."""
+    env = FakeEnv([question("q1", 1), question("q2", 2, text=text)])
+    client = FakeLLM([_query("SELECT cust_ref FROM orders LIMIT 1"), _submit(), _submit()])
+    config = make_config().model_copy(update={"a2_retrieval": "auto"})
+    ctx = make_ctx(tmp_path, client=client, env=env, arm="A2", with_index=True, config=config)
+    arm = RawRagArm()
+    first = run_session(arm, ctx, 1)
+    arm.after_session(ctx, 1)
+    second = run_session(arm, ctx, 2)
+    return ctx, client, [*first, *second]
+
+
+def test_auto_retrieval_prepends_excerpts(tmp_path: Path) -> None:
+    text = "Which column holds the cust_ref of an order?"
+
+    _, client, results = _auto_rag_session_2(tmp_path, text)
+
+    user = client.calls[-1]["messages"][1]["content"]
+    assert user.startswith("Relevant excerpts from past sessions:\n")
+    assert "SELECT cust_ref FROM orders LIMIT 1" in user
+    assert user.endswith("\n\n" + text)
+    assert [r.retrieved_tokens > 0 for r in results] == [False, True]
+    assert client.calls[0]["messages"][1]["content"] == "How many orders are there? (q1)"
+
+
+def test_auto_retrieval_not_written_to_transcript(tmp_path: Path) -> None:
+    text = "Which column holds the cust_ref of an order?"
+
+    ctx, _, _ = _auto_rag_session_2(tmp_path, text)
+
+    transcript = _transcript(ctx, "A2", 2)
+    assert f"USER: {text}\n" in transcript
+    assert "Relevant excerpts" not in transcript
+    assert "TOOL CALL query" not in transcript

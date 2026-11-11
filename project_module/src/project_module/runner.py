@@ -150,6 +150,7 @@ def generate_streams(config: ExperimentConfig, out_root: Path) -> list[Path]:
                 sessions=config.sessions,
                 questions_per_session=config.questions_per_session,
                 inject=config.inject_false_notes,
+                drift=config.drift,
             )
             found = validate_stream(load_stream(stream_dir))
             problems += [f"{stream_id}: {problem}" for problem in found]
@@ -170,7 +171,7 @@ def make_env(
     ------
     ValueError
         If the stream on disk does not match `config` (id, seed, sessions, questions per
-        session, or presence of false notes), or a CL-Bench config states other query, row
+        session, presence of false notes, or drift), or a CL-Bench config states other query, row
         or timeout limits than the CL-Bench adapter enforces.
     """
     if config.task == "clbench":
@@ -196,12 +197,14 @@ def make_env(
         config.questions_per_session,
     )
     _require_match(stream_id, "false notes", bool(stream.injections), config.inject_false_notes)
+    _require_match(stream_id, "drift", stream.drift, config.drift)
     online = config.budgets.online
     schemadrift = SchemaDriftEnv(
         stream,
         row_limit=online.sql_row_limit,
         timeout_s=online.sql_timeout_s,
         max_queries=online.max_queries,
+        feedback=config.feedback == "graded",
     )
     return schemadrift, stream
 

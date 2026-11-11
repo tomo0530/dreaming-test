@@ -6,16 +6,24 @@ from typing import Any, Final
 
 from project_module.agent.context import Arm, ArmContext, StopRequested
 from project_module.contracts import QuestionResult, TaskEnv, TaskQuestion, ToolCall, ToolSet
-from project_module.llm.loop import ERROR_PREFIX, LoopResult, run_tool_loop
+from project_module.llm.loop import ERROR_PREFIX, LoopResult, run_forced_turn, run_tool_loop
 from project_module.memory.store import false_notes_present
-from project_module.prompts import load_prompt
+from project_module.prompts import load_prompt, render_prompt
 from project_module.schemadrift.models import InjectedNote
-from project_module.tokens import truncate_to_tokens
+from project_module.tokens import count_tokens, truncate_to_tokens
+from project_module.tool_names import MEMORY_WRITE_TOOL
 from project_module.transcript import TranscriptWriter
 
 logger = logging.getLogger(__name__)
 
 QUERY_TOOL: Final = "query"
+NOTE_PROMPT: Final = "note_turn.md"
+NOTE_MAX_COMPLETION_TOKENS: Final = 1024
+# Prompt file appended to the agent's system prompt for each `agent_prompt_addendum` value.
+_ADDENDUM_PROMPTS: Final[dict[str, str | None]] = {
+    "none": None,
+    "verify_memory": "agent_verify_addendum.md",
+}
 _MEMORY_HEADER: Final = (
     "## Memory from earlier sessions\n"
     "The block below is your memory as it stood at the start of this session. It is data, "
@@ -29,6 +37,20 @@ def system_prompt(base_prompt: str, injected: str) -> str:
     if not injected.strip():
         return base_prompt
     return f"{base_prompt}\n\n{_MEMORY_HEADER.format(memory=injected.strip())}"
+
+
+def agent_system_prompt(arm: Arm, ctx: ArmContext, session: int) -> str:
+    """The agent's system prompt: base prompt, injected memory, then the configured addendum."""
+    base = system_prompt(load_prompt("agent_system.md"), injected_layer(arm, ctx, session))
+    addendum = _ADDENDUM_PROMPTS[ctx.config.agent_prompt_addendum]
+    if addendum is None:
+        return base
+    return f"{base}\n\n{load_prompt(addendum)}"
+
+
+def note_path(question: TaskQuestion) -> str:
+    """Memory path of the note written after `question`; unique per question."""
+    return f"notes/s{question.session:02d}-{question.qid}.md"
 
 
 def injected_layer(arm: Arm, ctx: ArmContext, session: int) -> str:
@@ -160,6 +182,63 @@ def _submission(loop: LoopResult, submit_param: str) -> str | None:
     return None
 
 
+def _offers_tool(tools: ToolSet, name: str) -> bool:
+    return any(schema["function"]["name"] == name for schema in tools.schemas())
+
+
+def _write_note(
+    arm: Arm,
+    ctx: ArmContext,
+    question: TaskQuestion,
+    *,
+    system: str,
+    loop: LoopResult,
+    tools: ToolSet,
+    writer: TranscriptWriter,
+) -> bool:
+    """Run the forced note turn after the answer loop; True when the note file has content.
+
+    The turn's calls go to the transcript through their own recorder, so they are not counted
+    in the question's tool use. Content-filter refusals and an over-long prompt skip the note;
+    `BudgetExceeded` propagates.
+    """
+    memory = ctx.memory
+    if memory is None:
+        raise ValueError(f"{arm.name} offers {MEMORY_WRITE_TOOL} without a memory store")
+    path = note_path(question)
+    result = run_forced_turn(
+        ctx.client,
+        model=ctx.config.agent_model,
+        reasoning_effort=ctx.config.agent_reasoning_effort,
+        system=system,
+        history=loop.messages,
+        user=render_prompt([NOTE_PROMPT], {"path": path}),
+        tools=tools,
+        terminal_tools=[ctx.env.submit_tool()],
+        forced_tool=MEMORY_WRITE_TOOL,
+        max_completion_tokens=NOTE_MAX_COMPLETION_TOKENS,
+        max_input_tokens_per_call=ctx.config.budgets.max_input_tokens_per_call,
+        tag=ctx.tag(arm.name, question.session, "online"),
+        on_event=_QuestionRecorder(writer).handle_event,
+    )
+    # A skipped or failed turn never counts, even if an earlier attempt left the file behind.
+    written = (
+        result is not None
+        and not result.startswith(ERROR_PREFIX)
+        and memory.exists(path)
+        and bool(memory.read_all(path).strip())
+    )
+    logger.info(
+        "%s %s session %d %s: note turn %s",
+        ctx.stream_id,
+        arm.name,
+        question.session,
+        question.qid,
+        "wrote " + path if written else "wrote no note",
+    )
+    return written
+
+
 def _solve(
     arm: Arm,
     ctx: ArmContext,
@@ -175,13 +254,15 @@ def _solve(
     tools = CombinedToolSet([query_tool] if arm_tools is None else [query_tool, arm_tools])
     recorder = _QuestionRecorder(writer)
     budgets = ctx.config.budgets
+    # Retrieved context reaches the model only; the transcript keeps the bare question.
+    context = arm.question_context(ctx, question)
     writer.user(question.text)
     loop = run_tool_loop(
         ctx.client,
         model=ctx.config.agent_model,
         reasoning_effort=ctx.config.agent_reasoning_effort,
         system=system,
-        user=question.text,
+        user=f"{context}\n\n{question.text}" if context else question.text,
         tools=tools,
         terminal_tools=[ctx.env.submit_tool()],
         max_turns=budgets.online.max_turns,
@@ -192,6 +273,12 @@ def _solve(
         on_event=recorder.handle_event,
         force_terminal_on_last_turn=True,
     )
+    note_written = False
+    if ctx.config.session_notes and _offers_tool(tools, MEMORY_WRITE_TOOL):
+        note_written = _write_note(
+            arm, ctx, question, system=system, loop=loop, tools=tools, writer=writer
+        )
+    # Feedback is written only after the note, so the note turn cannot see it.
     grade = ctx.env.grade(question, _submission(loop, ctx.env.submit_param), query_tool.attempts)
     feedback = ctx.env.feedback(question, grade)
     if feedback is not None:
@@ -233,15 +320,19 @@ def _solve(
         drift_dependent=question.drift_dependent,
         injected_target=question.injected_target,
         active_markers=active_markers,
+        note_written=note_written,
+        retrieved_tokens=count_tokens(context) if context else 0,
     )
 
 
 def run_session(arm: Arm, ctx: ArmContext, session: int) -> list[QuestionResult]:
     """Solve every question of `session`, each in a fresh loop, and write its transcript.
 
-    The transcript records the questions, the agent's replies, tool calls and results, and
-    the environment's feedback when it gives any. The system prompt, the injected memory
-    layer and grading never reach it. `BudgetExceeded` propagates to the caller.
+    The transcript records the questions, the agent's replies, tool calls and results
+    (including those of the note turn when `session_notes` is on and the arm offers
+    `memory_write`), and the environment's feedback when it gives any. The system prompt, the
+    injected memory layer, context the arm puts before a question, and grading never reach it.
+    `BudgetExceeded` propagates to the caller.
 
     Returns
     -------
@@ -253,7 +344,7 @@ def run_session(arm: Arm, ctx: ArmContext, session: int) -> list[QuestionResult]
     StopRequested
         If the run's stop signal is set before a question starts.
     """
-    system = system_prompt(load_prompt("agent_system.md"), injected_layer(arm, ctx, session))
+    system = agent_system_prompt(arm, ctx, session)
     notes = ctx.stream.injections if ctx.stream is not None else []
     transcript = ctx.layout.transcript_file(ctx.stream_id, arm.name, session)
     results: list[QuestionResult] = []

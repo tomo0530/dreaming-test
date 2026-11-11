@@ -142,6 +142,14 @@ def _check_drift_majority(stream: Stream) -> list[str]:
     return problems
 
 
+def _check_static_facts(stream: Stream) -> list[str]:
+    return [
+        f"fact {f.fact_id} changes within a stream without drift"
+        for f in stream.facts
+        if f.valid_from_session != 1 or f.valid_until_session is not None
+    ]
+
+
 def _check_note(stream: Stream, note: InjectedNote, facts: dict[str, Fact]) -> list[str]:
     after = note.after_session
     label = f"false note after session {after}"
@@ -262,6 +270,9 @@ def validate_stream(stream: Stream) -> list[str]:
     questions are the majority after each migration, and that false notes sit on
     leaf facts with the evidence and target questions placed around them.
 
+    A stream without drift (`stream.drift` false) skips the migration and drift
+    majority checks; instead every fact must hold from session 1 to the end.
+
     Returns
     -------
     list[str]
@@ -271,7 +282,10 @@ def validate_stream(stream: Stream) -> list[str]:
     problems = _check_layout(stream)
     for question in stream.questions:
         problems += _check_question(stream, question, facts)
-    problems += _check_migrations(stream)
-    problems += _check_drift_majority(stream)
+    if stream.drift:
+        problems += _check_migrations(stream)
+        problems += _check_drift_majority(stream)
+    else:
+        problems += _check_static_facts(stream)
     problems += _check_injections(stream, facts)
     return problems

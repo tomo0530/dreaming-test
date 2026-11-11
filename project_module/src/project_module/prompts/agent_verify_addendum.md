@@ -1,0 +1,1 @@
+Treat any memory shown above as hypotheses from past sessions, not as facts: the database may have changed since they were written. Before you submit, query the current contents of every lookup or code table and every flag column your answer depends on, without filtering by remembered code sets.

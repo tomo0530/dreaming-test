@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from fakes import FakeLLM
+from project_module.agent.context import ArmContext
 from project_module.agent.online_arms import (
     FACTS_FILE,
     INJECTED_FILE,
@@ -162,3 +163,64 @@ def test_oracle_arm_requires_stream_and_memory(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="stream"):
         OracleArm().setup(ctx)
+
+
+def _rag_ctx(tmp_path: Path, client: FakeLLM, *, a2_retrieval: str) -> ArmContext:
+    config = make_config().model_copy(update={"a2_retrieval": a2_retrieval})
+    return make_ctx(
+        tmp_path,
+        client=client,
+        env=FakeEnv([question("q1")]),
+        arm="A2",
+        with_index=True,
+        config=config,
+    )
+
+
+def _index_session_1(arm: RawRagArm, ctx: ArmContext) -> None:
+    with TranscriptWriter(
+        ctx.layout.transcript_file(STREAM_ID, "A2", 1), stream_id=STREAM_ID, session=1
+    ) as writer:
+        writer.user("Which column holds the customer reference?")
+        writer.tool_call("query", {"sql": "SELECT cust_ref FROM orders LIMIT 1"})
+        writer.tool_result("query", "cust_ref\n17")
+    arm.after_session(ctx, 1)
+
+
+def test_auto_mode_has_no_search_tool(tmp_path: Path) -> None:
+    ctx = _rag_ctx(tmp_path, FakeLLM(), a2_retrieval="auto")
+
+    assert RawRagArm().online_tools(ctx, 2) is None
+
+
+def test_auto_retrieval_returns_excerpts_under_the_heading(tmp_path: Path) -> None:
+    client = FakeLLM()
+    ctx = _rag_ctx(tmp_path, client, a2_retrieval="auto")
+    arm = RawRagArm()
+    _index_session_1(arm, ctx)
+
+    context = arm.question_context(ctx, question("q2", 2, text="Which column is cust_ref?"))
+
+    assert context.startswith("Relevant excerpts from past sessions:\n")
+    assert "[session 1]" in context and "SELECT cust_ref FROM orders" in context
+    assert client.tags[-1].component == "online"
+    assert client.tags[-1].session == 2
+
+
+def test_auto_retrieval_is_empty_before_anything_is_indexed(tmp_path: Path) -> None:
+    ctx = _rag_ctx(tmp_path, FakeLLM(), a2_retrieval="auto")
+
+    assert RawRagArm().question_context(ctx, question("q1", 1)) == ""
+
+
+def test_tool_mode_puts_nothing_before_the_question(tmp_path: Path) -> None:
+    client = FakeLLM()
+    ctx = _rag_ctx(tmp_path, client, a2_retrieval="tool")
+    arm = RawRagArm()
+    _index_session_1(arm, ctx)
+    embeddings_before = len(client.transport.embed_calls)
+
+    context = arm.question_context(ctx, question("q2", 2, text="Which column is cust_ref?"))
+
+    assert context == ""
+    assert len(client.transport.embed_calls) == embeddings_before

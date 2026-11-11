@@ -19,7 +19,7 @@ from project_module.config import (
     OnlineBudget,
     load_models,
 )
-from project_module.contracts import ChatResult, CostTag, QuestionResult, ToolChoice
+from project_module.contracts import ChatResult, CostTag, Grade, QuestionResult, ToolChoice
 from project_module.layout import RunLayout
 from project_module.llm.ledger import CostLedger
 from project_module.llm.metered import MeteredClient
@@ -50,6 +50,10 @@ MODELS = REPO / "configs" / "models.yaml"
 RUN_ID = "run-test"
 
 Observer = Callable[[CostTag, list[dict[str, Any]]], None]
+
+
+class _StopGeneration(Exception):
+    """Raised by a stand-in generator to end `generate_streams` once the call is seen."""
 
 
 class RunnerLLM(FakeLLM):
@@ -377,6 +381,68 @@ def test_make_env_rejects_a_stream_that_does_not_match_the_config(tmp_path: Path
                 streams_root=tmp_path / "streams",
                 clbench_root=tmp_path / "none",
             )
+
+
+@pytest.mark.parametrize(
+    ("config_drift", "stream_drift"),
+    [(False, True), (True, False)],
+    ids=["no-drift-config", "drift-config"],
+)
+def test_make_env_rejects_drift_mismatch(
+    tmp_path: Path, config_drift: bool, stream_drift: bool
+) -> None:
+    config = _small_config("drift", ["d-01"], [20])
+    generate_streams(config, tmp_path / "streams")
+    stream_file = tmp_path / "streams" / "d-01" / "stream.json"
+    data = json.loads(stream_file.read_text(encoding="utf-8"))
+    stream_file.write_text(json.dumps({**data, "drift": stream_drift}), encoding="utf-8")
+    # `model_copy` skips validation, which is what lets a config disagree with its stream.
+    mismatched = config.model_copy(update={"drift": config_drift})
+
+    with pytest.raises(ValueError, match="d-01: drift is"):
+        make_env(
+            mismatched,
+            "d-01",
+            20,
+            streams_root=tmp_path / "streams",
+            clbench_root=tmp_path / "none",
+        )
+
+
+@pytest.mark.parametrize(
+    ("feedback", "expected_line"),
+    [("graded", "Question 1: CORRECT!"), ("none", None)],
+)
+def test_make_env_passes_the_feedback_switch(
+    tmp_path: Path, feedback: str, expected_line: str | None
+) -> None:
+    config = _small_config("fb", ["f-01"], [20], feedback=feedback)
+    generate_streams(config, tmp_path / "streams")
+    env, _ = make_env(
+        config, "f-01", 20, streams_root=tmp_path / "streams", clbench_root=tmp_path / "none"
+    )
+
+    line = env.feedback(env.questions_for(1)[0], Grade(category="correct", score=1.0))
+
+    assert line == expected_line
+
+
+def test_generate_streams_requests_the_configured_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requested: list[bool] = []
+
+    def record_and_stop(*_: Any, drift: bool, **__: Any) -> None:
+        requested.append(drift)
+        raise _StopGeneration
+
+    monkeypatch.setattr("project_module.runner.generate_stream", record_and_stop)
+    config = _small_config("nodrift", ["n-01"], [20]).model_copy(update={"drift": False})
+
+    with pytest.raises(_StopGeneration):
+        generate_streams(config, tmp_path / "streams")
+
+    assert requested == [False]
 
 
 def test_generate_streams_refuses_invalid_stream(

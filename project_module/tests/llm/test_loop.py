@@ -3,7 +3,9 @@ from typing import Any
 import pytest
 from fakes import FakeLLM, make_tag, text_reply, tool_reply
 from project_module.contracts import ChatResult, ToolCall, Usage
-from project_module.llm.loop import LENGTH_NUDGE, LoopResult, run_tool_loop
+from project_module.llm import INVALID_ARGUMENTS_KEY, ContentFiltered
+from project_module.llm.ledger import BudgetExceeded
+from project_module.llm.loop import LENGTH_NUDGE, LoopResult, run_forced_turn, run_tool_loop
 
 SUBMIT = {
     "type": "function",
@@ -317,3 +319,140 @@ def test_loop_stops_gracefully_on_content_filter() -> None:
         tag=make_tag(),
     )
     assert (result.stopped, result.turns) == ("content_filter", 0)
+
+
+def _forced(
+    llm: FakeLLM,
+    tools: RecordingTools,
+    history: list[dict[str, Any]],
+    *,
+    forced_tool: str = "b",
+    max_input_tokens_per_call: int = 10_000,
+    events: list[tuple[str, dict[str, Any]]] | None = None,
+) -> str | None:
+    return run_forced_turn(
+        llm,
+        model="luna",
+        reasoning_effort="low",
+        system="You are a test agent.",
+        history=history,
+        user="Write the note.",
+        tools=tools,
+        terminal_tools=[SUBMIT],
+        forced_tool=forced_tool,
+        max_completion_tokens=64,
+        max_input_tokens_per_call=max_input_tokens_per_call,
+        tag=make_tag(),
+        on_event=None if events is None else lambda kind, data: events.append((kind, data)),
+    )
+
+
+def _assistant_calls(*calls: tuple[str, str]) -> dict[str, Any]:
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": call_id, "type": "function", "function": {"name": name, "arguments": "{}"}}
+            for call_id, name in calls
+        ],
+    }
+
+
+def test_loop_result_keeps_the_conversation_without_system() -> None:
+    llm = FakeLLM([tool_reply(("a", {})), tool_reply(("submit", {"answer": "42"}))])
+
+    result = _run(llm, RecordingTools())
+
+    assert [m["role"] for m in result.messages] == ["user", "assistant", "tool", "assistant"]
+    assert result.messages[0] == {"role": "user", "content": "Do the task."}
+    assert result.messages[-1]["tool_calls"][0]["function"]["name"] == "submit"
+
+
+def test_run_forced_turn_dispatches_once() -> None:
+    llm = FakeLLM([tool_reply(("b", {"note": "x"}), ("a", {}))])
+    tools = RecordingTools()
+    history = [{"role": "user", "content": "Do the task."}, {"role": "assistant", "content": "ok"}]
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    text = _forced(llm, tools, history, events=events)
+
+    assert text == "b:{'note': 'x'}"
+    assert [c.name for c in tools.dispatched] == ["b"]
+    assert len(llm.calls) == 1
+    sent = llm.calls[0]
+    assert sent["tool_choice"] == {"type": "function", "name": "b"}
+    assert [t["function"]["name"] for t in sent["tools"]] == ["a", "b", "submit"]
+    assert sent["messages"] == [
+        {"role": "system", "content": "You are a test agent."},
+        *history,
+        {"role": "user", "content": "Write the note."},
+    ]
+    assert sent["max_completion_tokens"] == 64
+    assert events == [
+        ("tool_call", {"name": "b", "arguments": {"note": "x"}}),
+        ("tool_result", {"name": "b", "text": "b:{'note': 'x'}", "error": False}),
+    ]
+
+
+def test_run_forced_turn_closes_every_unanswered_call_of_the_last_reply() -> None:
+    llm = FakeLLM([tool_reply(("b", {}))])
+    history = [
+        {"role": "user", "content": "Do the task."},
+        _assistant_calls(("c1", "a"), ("c2", "submit"), ("c3", "b")),
+        {"role": "tool", "tool_call_id": "c1", "content": "a:{}"},
+    ]
+
+    _forced(llm, RecordingTools(), history)
+
+    sent = llm.calls[0]["messages"]
+    assert sent[len(history) + 1 : -1] == [
+        {"role": "tool", "tool_call_id": "c2", "content": "Submitted."},
+        {"role": "tool", "tool_call_id": "c3", "content": "Not executed: the question is closed."},
+    ]
+    assert sent[-1] == {"role": "user", "content": "Write the note."}
+
+
+def test_run_forced_turn_skips_the_call_over_the_input_budget() -> None:
+    llm = FakeLLM([tool_reply(("b", {}))])
+    tools = RecordingTools()
+
+    text = _forced(llm, tools, [{"role": "user", "content": "x"}], max_input_tokens_per_call=5)
+
+    assert text is None
+    assert llm.calls == []
+    assert tools.dispatched == []
+
+
+def test_run_forced_turn_returns_none_on_content_filter() -> None:
+    class _Filtered(FakeLLM):
+        def chat(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            raise ContentFiltered("blocked")
+
+    tools = RecordingTools()
+
+    assert _forced(_Filtered(), tools, [{"role": "user", "content": "x"}]) is None
+    assert tools.dispatched == []
+
+
+def test_run_forced_turn_propagates_budget_exceeded() -> None:
+    class _Broke(FakeLLM):
+        def chat(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            raise BudgetExceeded("phase cap reached")
+
+    with pytest.raises(BudgetExceeded):
+        _forced(_Broke(), RecordingTools(), [{"role": "user", "content": "x"}])
+
+
+def test_run_forced_turn_returns_invalid_arguments_as_error_without_dispatch() -> None:
+    llm = FakeLLM([tool_reply(("b", {INVALID_ARGUMENTS_KEY: "not json"}))])
+    tools = RecordingTools()
+
+    text = _forced(llm, tools, [{"role": "user", "content": "x"}])
+
+    assert text is not None and text.startswith("ERROR: arguments are not valid JSON")
+    assert tools.dispatched == []
+
+
+def test_run_forced_turn_rejects_a_tool_outside_the_tool_set() -> None:
+    with pytest.raises(ValueError, match="forced tool 'submit' is not in the tool set"):
+        _forced(FakeLLM(), RecordingTools(), [], forced_tool="submit")
