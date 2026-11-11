@@ -1,0 +1,106 @@
+{
+  "passed": true,
+  "failed": [],
+  "thresholds": {
+    "note_rate_min": 0.9,
+    "notes_read_rate_min": 0.9,
+    "retrieval_rate_min": 0.95,
+    "no_submission_max": 0.1,
+    "sql_probe_rate_min": 0.5,
+    "cost_safety": 1.3
+  },
+  "conditions": {
+    "G0": {
+      "passed": true,
+      "unfinished_jobs": {}
+    },
+    "G1": {
+      "passed": true,
+      "streams_checked": 53,
+      "problems": {}
+    },
+    "G2": {
+      "passed": true,
+      "fb1_graded_questions": 576,
+      "fb1_questions_with_feedback": 576,
+      "fb1_transcripts_match_results": true,
+      "fb0_feedback_lines": 0
+    },
+    "G3": {
+      "passed": true,
+      "A1": {
+        "questions": 504,
+        "note_rate": 1.0,
+        "consolidations_after_notes": 77,
+        "notes_read_rate": 1.0,
+        "passed": true
+      },
+      "A4": {
+        "questions": 648,
+        "note_rate": 1.0,
+        "consolidations_after_notes": 99,
+        "notes_read_rate": 1.0,
+        "passed": true
+      }
+    },
+    "G4": {
+      "passed": true,
+      "questions": 264,
+      "retrieval_rate": 1.0
+    },
+    "G5": {
+      "passed": true,
+      "no_submission_rate": {
+        "fb0/A0": 0.0,
+        "fb0/A1": 0.027777777777777776,
+        "fb0/A2": 0.0,
+        "fb0/A4": 0.027777777777777776,
+        "fb0/A5": 0.04861111111111111,
+        "fb1/A0": 0.0,
+        "fb1/A1": 0.006944444444444444,
+        "fb1/A2": 0.0,
+        "fb1/A4": 0.027777777777777776,
+        "verify/A0": 0.0625,
+        "verify/A1": 0.041666666666666664,
+        "verify/A4": 0.04861111111111111,
+        "probe/A4": 0.05555555555555555,
+        "null/A1": 0.027777777777777776,
+        "null/A4": 0.013888888888888888
+      }
+    },
+    "G6": {
+      "passed": true,
+      "unit_cost_usd": {
+        "fb0/A0": 0.038060415,
+        "fb0/A1": 0.160161309,
+        "fb0/A2": 0.058013390000000005,
+        "fb0/A4": 0.192450395,
+        "fb0/A5": 0.023602014999999997,
+        "fb1/A0": 0.038054105000000005,
+        "fb1/A1": 0.15768587,
+        "fb1/A2": 0.057071285,
+        "fb1/A4": 0.19107791000000002,
+        "verify/A0": 0.038843789999999996,
+        "verify/A1": 0.17492575000000005,
+        "verify/A4": 0.19580903300000002,
+        "probe/A4": 0.19241791900000002,
+        "null/A1": 0.1655201,
+        "null/A4": 0.19537995000000002
+      },
+      "unpriced": [],
+      "projected_usd": {
+        "fu_main": 47.641188088,
+        "fu_aux": 20.343609442
+      },
+      "phase_caps_usd": {
+        "fu_main": 52.0,
+        "fu_aux": 25.0
+      }
+    },
+    "G7": {
+      "passed": true,
+      "consolidations": 22,
+      "query_rate": 1.0
+    }
+  }
+}
