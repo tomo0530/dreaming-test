@@ -1,0 +1,31 @@
+# Follow-up E3: no-drift control (exploratory).
+name: fu_null
+phase: fu_aux
+task: schemadrift
+arms: [A1, A4]
+stream_ids: [fu-null-01, fu-null-02, fu-null-03, fu-null-04, fu-null-05, fu-null-06, fu-null-07, fu-null-08,
+  fu-null-09, fu-null-10]
+seeds: [4101, 4102, 4103, 4104, 4105, 4106, 4107, 4108, 4109, 4110]
+sessions: 12
+questions_per_session: 6
+inject_false_notes: false
+agent_model: gpt-6-luna
+consolidator_model: gpt-6-luna
+embedding_model: text-embedding-3-large
+agent_reasoning_effort: low
+consolidator_reasoning_effort: medium
+probe_sessions: [4, 8, 12]
+probes_per_checkpoint: 8
+feedback: none
+session_notes: true
+a2_retrieval: auto
+drift: false
+concurrency: 3
+budgets:
+  phase_cap_usd: 25
+  hard_cap_usd: 200.0
+  injected_tokens: 2000
+  max_input_tokens_per_call: 64000
+  online: {max_turns: 8, max_queries: 8, max_completion_tokens: 2048, memory_read_tokens: 6000, sql_row_limit: 50,
+    sql_timeout_s: 5.0}
+  consolidation: {analyzer_max_turns: 10, organizer_max_turns: 12, max_completion_tokens: 8192, max_input_tokens_per_run: 900000}

@@ -100,7 +100,7 @@
   - `generate_stream(stream_id, seed, out_dir, *, sessions=12, questions_per_session=6, inject: bool, drift: bool = True) -> Stream`。
   - T0 では `drift=False` で `NotImplementedError` を投げておき、T2 が実装する。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```python
 def test_new_fields_default_to_previous_behaviour(): ...  # 既定値の dump と、前回の main.yaml の config_sha256 が一致する
@@ -113,10 +113,10 @@ def test_stream_dump_omits_default_drift(
 ): ...  # drift=True の dump に "drift" キーがない。False ならある
 ```
 
-- [ ] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/test_contracts.py project_module/tests/test_runner.py -q` / Expected: 上記が FAIL
-- [ ] **Step 3: 上記 Interfaces を実装する**
-- [ ] **Step 4: 互換を実データで確かめる** — Run: `outputs/*/manifest.json` の 7 件を読み、それぞれの当時の yaml を `load_experiment` で読んで `matches_config` を確かめる一回限りのスクリプト / Expected: 7 件すべて True（前回 R4 と同じ手順）
-- [ ] **Step 5: `make test` と `make all-lint` を通して commit する** — `git commit -m "feat: add follow-up switches, phases and digest compatibility"`
+- [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/test_contracts.py project_module/tests/test_runner.py -q` / Expected: 上記が FAIL
+- [x] **Step 3: 上記 Interfaces を実装する**
+- [x] **Step 4: 互換を実データで確かめる** — Run: `outputs/*/manifest.json` の 7 件を読み、それぞれの当時の yaml を `load_experiment` で読んで `matches_config` を確かめる一回限りのスクリプト / Expected: 7 件すべて True（前回 R4 と同じ手順）
+- [x] **Step 5: `make test` と `make all-lint` を通して commit する** — `git commit -m "feat: add follow-up switches, phases and digest compatibility"`
 
 ---
 
@@ -134,7 +134,7 @@ def test_stream_dump_omits_default_drift(
   - `make_env` は `config.feedback == "graded"` を env に渡す。`config.drift != stream.drift` なら `ValueError`。
   - `generate_streams` は `drift=config.drift` を渡す。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```python
 def test_feedback_disabled_returns_none(): ...  # 既存 test_env.py:120 の期待を「既定では None」と読み替える
@@ -149,11 +149,11 @@ def test_make_env_rejects_drift_mismatch(tmp_path): ...
 def test_make_env_passes_graded_feedback(tmp_path): ...
 ```
 
-- [ ] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/schemadrift/test_env.py project_module/tests/test_runner.py -q`
-- [ ] **Step 3: 実装する**
+- [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/schemadrift/test_env.py project_module/tests/test_runner.py -q`
+- [x] **Step 3: 実装する**
   - 期待値の各セルは `env.py` の `_cell` で整える。
   - `{n}` は、ストリーム内の問題の並び順（セッション順、セッション内の出題順）で振る 1 始まりの番号とする。
-- [ ] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
+- [x] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
 
 ---
 
@@ -170,7 +170,7 @@ def test_make_env_passes_graded_feedback(tmp_path): ...
   - そのストリームでは、全 Fact が `valid_from_session == 1` かつ `valid_until_session is None`。全問題が `drift_dependent == False`。
   - `validate_stream` は `stream.drift` が偽のとき、`_check_migrations` と `_check_drift_majority` を飛ばす。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```python
 def test_no_drift_stream_has_static_facts(tmp_path): ...
@@ -185,12 +185,12 @@ def test_drift_default_is_unchanged(
 ): ...  # drift=True（既定）の stream.json と DB が変更前と同じハッシュ（seed 4521 で、変更前の値を固定値として埋める）
 ```
 
-- [ ] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/schemadrift -q`
-- [ ] **Step 3: 実装する**
+- [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/schemadrift -q`
+- [x] **Step 3: 実装する**
   - `_make_design`: `visible` と `semantic` を変更前と同じ順で抽出してから、`change_epoch` を `{}` にする。
   - `_plan_slots`: エポック 2 以降も drift 枠を 0 にし、`"prime"` の役割を `"any"` に替える。
   - `_Selector._try`: `"prime"` の役割を前提にしないようにする。
-- [ ] **Step 4: テストが通ることを確認する** — 同じコマンドと、`-m slow` の 100 seed テストを実行する / Expected: PASS
+- [x] **Step 4: テストが通ることを確認する** — 同じコマンドと、`-m slow` の 100 seed テストを実行する / Expected: PASS
 
 ---
 
@@ -225,7 +225,7 @@ def test_drift_default_is_unchanged(
   - `retrieved_tokens` は `count_tokens(question_context の結果)` で、`_solve` が記録する。
 - `prompts/agent_verify_addendum.md` の本文は、00_design §4.4 の英文そのままとする。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```python
 def test_note_turn_writes_note_after_submit(): ...  # FakeLLM の台本: query → submit → memory_write。note_written=True、notes/s01-<qid>.md がある
@@ -246,9 +246,9 @@ def test_run_forced_turn_dispatches_once(): ...  # llm/test_loop.py
 def test_note_turn_sends_same_tool_schemas_as_answer_loop(): ...  # FakeTransport.calls の tools 引数が、回答ループと同じ並びで一致する
 ```
 
-- [ ] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/agent project_module/tests/llm/test_loop.py -q`
-- [ ] **Step 3: 上記 Interfaces を実装する** — `note_turn.md` は 00_design §4.2 の要件を満たす英文で書く（dev で調整してよい）。
-- [ ] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
+- [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/agent project_module/tests/llm/test_loop.py -q`
+- [x] **Step 3: 上記 Interfaces を実装する** — `note_turn.md` は 00_design §4.2 の要件を満たす英文で書く（dev で調整してよい）。
+- [x] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
 
 ---
 
@@ -279,7 +279,7 @@ def test_note_turn_sends_same_tool_schemas_as_answer_loop(): ...  # FakeTranspor
       - `sql_queries`: 実行されて `ERROR:` でない結果を返した `query`。
   - `_consolidation_core.md` は変更しない。A1 と A4 の共通性を検査する既存テスト（`test_consolidation.py:318`、`:372-400`）は、既定設定で引き続き通ること。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```python
 def test_a1_gets_notes_write_only_with_session_notes(): ...
@@ -292,9 +292,9 @@ def test_default_config_phases_unchanged(): ...  # 既定設定の A1/A4 の Pha
 def test_core_prompt_untouched(): ...  # _consolidation_core.md の SHA-256 が変更前と同じ
 ```
 
-- [ ] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/test_consolidation.py project_module/tests/agent/test_memory_arms.py -q`
-- [ ] **Step 3: 上記 Interfaces を実装する** — 3 つの断片の文面は、00_design §4.2・§4.5 の要件を満たす英文で書く。
-- [ ] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
+- [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/test_consolidation.py project_module/tests/agent/test_memory_arms.py -q`
+- [x] **Step 3: 上記 Interfaces を実装する** — 3 つの断片の文面は、00_design §4.2・§4.5 の要件を満たす英文で書く。
+- [x] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
 
 ---
 
@@ -339,7 +339,7 @@ def test_core_prompt_untouched(): ...  # _consolidation_core.md の SHA-256 が�
   - `--gate` のときは、`--run` を pilot の run として扱う。本番の設定ファイルからジョブ数を数え、`followup-gate.json` を出す。不合格なら終了コード 1。
   - それ以外のときは `followup-metrics.json` を出す。
 
-- [ ] **Step 1: 失敗するテストを書く**（`tests/evaluation/builders.py` の既存ビルダーで RunData を組む）
+- [x] **Step 1: 失敗するテストを書く**（`tests/evaluation/builders.py` の既存ビルダーで RunData を組む）
 
 ```python
 def test_common_streams_drops_stream_missing_any_condition(): ...
@@ -371,9 +371,9 @@ def test_gate_requires_no_feedback_in_fb0(): ...
 def test_gate_passes_on_all_mechanical_conditions(): ...
 ```
 
-- [ ] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/evaluation -q`
-- [ ] **Step 3: 上記 Interfaces を実装する**
-- [ ] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
+- [x] **Step 2: 失敗を確認する** — Run: `uv run pytest project_module/tests/evaluation -q`
+- [x] **Step 3: 上記 Interfaces を実装する**
+- [x] **Step 4: テストが通ることを確認する**（同じコマンド）/ Expected: PASS
 
 ---
 
@@ -402,7 +402,7 @@ def test_gate_passes_on_all_mechanical_conditions(): ...
   - `concurrency` は、本番の 5 run の合計が 24 になるように配る（`fu_fb0` 7、`fu_fb1` 7、`fu_verify` 4、`fu_probe` 3、`fu_null` 3）。
 - `scripts/generate_streams.py` と `scripts/run_experiment.py` は、新しい yaml のパスを渡すだけで動くこと。CLI の変更が要る場合だけ、最小限に直す。
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```python
 def test_followup_configs_load_and_match_design(): ...  # 全 yaml が読め、phase・群・ストリーム・スイッチが 00_design §6・§7 と一致する
@@ -414,8 +414,8 @@ def test_e2e_fake_followup_pilot_gate(
 def test_e2e_fake_no_drift_stream(tmp_path): ...
 ```
 
-- [ ] **Step 2: 失敗を確認し、実装し、通す** — Run: `uv run pytest project_module/tests/test_contracts.py project_module/tests/test_e2e_fake.py -q` / Expected: PASS
-- [ ] **Step 3: 全体を確認して commit する** — Run: `make test && make all-lint` / Expected: すべて成功し、lint は 0 件。`git commit -m "feat: follow-up configs and end-to-end check"`
+- [x] **Step 2: 失敗を確認し、実装し、通す** — Run: `uv run pytest project_module/tests/test_contracts.py project_module/tests/test_e2e_fake.py -q` / Expected: PASS
+- [x] **Step 3: 全体を確認して commit する** — Run: `make test && make all-lint` / Expected: すべて成功し、lint は 0 件。`git commit -m "feat: follow-up configs and end-to-end check"`
 
 ---
 
