@@ -223,6 +223,7 @@ __marimo__/
 .agents/
 .claude/
 .superpowers/
+skills-lock.json
 
 # Experiment artifacts
 /outputs/
