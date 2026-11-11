@@ -23,7 +23,7 @@ from project_module.consolidation import (
     require_memory,
     run_consolidation,
 )
-from project_module.contracts import ConsolidationRecord, ToolSet
+from project_module.contracts import ConsolidationRecord, TaskQuestion, ToolSet
 from project_module.memory.store import MemoryStore
 from project_module.memory.tools import MemoryReadTools
 from project_module.schemadrift.models import InjectedNote
@@ -64,6 +64,9 @@ class _MemoryArm(Arm, ABC):
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet:
         return self._memory_tools(ctx, writable_prefix=self.notes_prefix)
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet:
         return self._memory_tools(ctx, writable_prefix=None)

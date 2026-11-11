@@ -40,6 +40,8 @@ class PhaseSpec(BaseModel):
     prompt_files: list[str] = Field(min_length=1)
     max_turns: int = Field(ge=1)
     transcripts_readable: bool
+    # Whether the phase may query the database of the session that has just ended.
+    sql_probe: bool = False
 
 
 def require_memory(ctx: ArmContext) -> MemoryStore:

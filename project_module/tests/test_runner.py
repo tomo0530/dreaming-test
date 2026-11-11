@@ -11,12 +11,24 @@ import pytest
 import yaml
 from fakes import FakeLLM, FakeTransport, text_reply, tool_reply
 from project_module.agent.context import StopSignal
-from project_module.config import ArmName, Budgets, ExperimentConfig, OnlineBudget, load_models
+from project_module.config import (
+    SCHEMADRIFT_SWITCHES,
+    ArmName,
+    Budgets,
+    ExperimentConfig,
+    OnlineBudget,
+    load_models,
+)
 from project_module.contracts import ChatResult, CostTag, QuestionResult, ToolChoice
 from project_module.layout import RunLayout
 from project_module.llm.ledger import CostLedger
 from project_module.llm.metered import MeteredClient
-from project_module.manifest import config_sha256, load_manifest
+from project_module.manifest import (
+    LATER_DEFAULTED_FIELDS,
+    config_sha256,
+    load_manifest,
+    matches_config,
+)
 from project_module.memory.store import MemoryStore, false_notes_present
 from project_module.runner import (
     InvalidStreamError,
@@ -505,7 +517,7 @@ def test_interrupt_stops_jobs_records_interrupted_and_releases_the_lock(
 def test_config_digest_of_the_default_timing_matches_manifests_written_before_the_field() -> None:
     config = _config(inject_false_notes=True)
     legacy_digest = hashlib.sha256(
-        config.model_dump_json(exclude={"false_note_timing"}).encode("utf-8")
+        config.model_dump_json(exclude=set(LATER_DEFAULTED_FIELDS)).encode("utf-8")
     ).hexdigest()
 
     assert config_sha256(config) == legacy_digest
@@ -524,7 +536,43 @@ def test_resume_accepts_the_full_dump_digest_recorded_by_earlier_code(tmp_path: 
     run_dir = run_experiment(config, client=RunnerLLM(), **kwargs)
     manifest_path = run_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["config_sha256"] = hashlib.sha256(config.model_dump_json().encode("utf-8")).hexdigest()
+    manifest["config_sha256"] = _d71c2f4_digest(config)
     manifest_path.write_text(json.dumps(manifest))
 
     assert run_experiment(config, client=RunnerLLM(), resume=run_dir, **kwargs) == run_dir
+
+
+def _d71c2f4_digest(config: ExperimentConfig) -> str:
+    """The digest commit d71c2f4 wrote: every field it knew, `false_note_timing` included."""
+    dump = config.model_dump_json(exclude=set(SCHEMADRIFT_SWITCHES))
+    return hashlib.sha256(dump.encode("utf-8")).hexdigest()
+
+
+def test_old_manifests_still_match_after_new_fields() -> None:
+    config = _config(inject_false_notes=True)
+    first_study = hashlib.sha256(
+        config.model_dump_json(exclude=set(LATER_DEFAULTED_FIELDS)).encode("utf-8")
+    ).hexdigest()
+
+    assert matches_config(first_study, config)
+    assert matches_config(_d71c2f4_digest(config), config)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"feedback": "graded"},
+        {"session_notes": True},
+        {"a2_retrieval": "auto"},
+        {"agent_prompt_addendum": "verify_memory"},
+        {"consolidator_sql": True},
+        {"drift": False},
+    ],
+)
+def test_changed_switch_does_not_match_old_digest(update: dict[str, Any]) -> None:
+    config = _config(inject_false_notes=True)
+    changed = config.model_copy(update=update)
+
+    assert not matches_config(config_sha256(config), changed)
+    assert not matches_config(_d71c2f4_digest(config), changed)
+    assert matches_config(config_sha256(changed), changed)

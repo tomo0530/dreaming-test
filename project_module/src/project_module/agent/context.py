@@ -5,7 +5,14 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from project_module.config import ArmName, ExperimentConfig
-from project_module.contracts import ConsolidationRecord, CostTag, LLMClient, TaskEnv, ToolSet
+from project_module.contracts import (
+    ConsolidationRecord,
+    CostTag,
+    LLMClient,
+    TaskEnv,
+    TaskQuestion,
+    ToolSet,
+)
 from project_module.layout import RunLayout
 from project_module.memory.store import MemoryStore
 from project_module.retrieval import HybridIndex
@@ -80,6 +87,10 @@ class Arm(Protocol):
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         """Called once per question; must return a fresh instance."""
+        ...
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        """Text the harness puts before the question; `""` for none."""
         ...
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:

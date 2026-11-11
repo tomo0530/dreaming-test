@@ -5,6 +5,7 @@ import yaml
 from fakes import FakeTransport, text_reply
 from project_module.config import ConsolidationBudget, ModelSpec, load_experiment, load_models
 from project_module.layout import RunLayout, ledger_path
+from project_module.manifest import config_sha256
 from project_module.schemadrift.models import Fact, Stream
 from project_module.tokens import count_tokens, truncate_to_tokens
 from pydantic import ValidationError
@@ -163,3 +164,49 @@ def test_fake_transport_replays_script_and_records_calls() -> None:
     assert (first.content, second.content) == ("a", "b")
     assert len(transport.calls) == 2
     assert transport.calls[0]["messages"][0]["content"] == "x"
+
+
+def test_new_fields_default_to_previous_behaviour() -> None:
+    # The main run recorded this digest before the follow-up switches existed.
+    main = load_experiment(REPO / "configs/experiments/main.yaml")
+
+    assert config_sha256(main).startswith("20233a42b2f0fae0")
+
+
+@pytest.mark.parametrize(
+    "switch",
+    [
+        {"feedback": "graded"},
+        {"session_notes": True},
+        {"a2_retrieval": "auto"},
+        {"agent_prompt_addendum": "verify_memory"},
+        {"consolidator_sql": True},
+        {"drift": False},
+    ],
+)
+def test_clbench_rejects_schemadrift_switches(tmp_path: Path, switch: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="SchemaDrift-only"):
+        load_experiment(_write_config(tmp_path, task="clbench", **switch))
+
+
+@pytest.mark.parametrize(
+    "phase", ["fu_dev", "fu_pilot", "fu_pilot_rev", "fu_main", "fu_aux", "fu_clbench"]
+)
+def test_followup_phases_are_valid(tmp_path: Path, phase: str) -> None:
+    assert load_experiment(_write_config(tmp_path, phase=phase)).phase == phase
+
+
+def test_stream_dump_omits_default_drift(tmp_path: Path) -> None:
+    stream = Stream(
+        stream_id="s",
+        seed=1,
+        root=tmp_path,
+        sessions=12,
+        questions_per_session=6,
+        questions=[],
+        facts=[],
+        injections=[],
+    )
+
+    assert '"drift"' not in stream.stream_json()
+    assert '"drift": false' in stream.model_copy(update={"drift": False}).stream_json()

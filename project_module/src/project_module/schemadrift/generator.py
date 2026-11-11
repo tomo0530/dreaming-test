@@ -2063,6 +2063,7 @@ def generate_stream(
     sessions: int = 12,
     questions_per_session: int = 6,
     inject: bool,
+    drift: bool = True,
 ) -> Stream:
     """Generate one stream and write `stream.json` and `epoch_{n}.sqlite` into `out_dir`.
 
@@ -2081,6 +2082,8 @@ def generate_stream(
     inject
         Whether to add the two false notes (after sessions 3 and 7). The questions
         are the same either way; only `injections` and `injected_target` differ.
+    drift
+        False generates a stream without migrations (`Stream.drift` is false).
 
     Raises
     ------
@@ -2090,6 +2093,8 @@ def generate_stream(
     RuntimeError
         If no question satisfies a slot's constraints (a generator defect).
     """
+    if not drift:
+        raise NotImplementedError("streams without drift are not generated yet")
     if not 1 <= sessions <= _MAX_SESSIONS:
         raise ValueError(f"sessions must be between 1 and {_MAX_SESSIONS}")
     if questions_per_session < _MIN_QUESTIONS_PER_SESSION:
@@ -2105,6 +2110,7 @@ def generate_stream(
         questions=[],
         facts=[],
         injections=[],
+        drift=drift,
     )
     world = _make_world(random.Random(f"{seed}:world"))
     design = _make_design(random.Random(f"{seed}:design"))
@@ -2132,9 +2138,7 @@ def generate_stream(
     stream = skeleton.model_copy(
         update={"questions": questions, "facts": facts.all(), "injections": injections}
     )
-    (out_dir / STREAM_FILE).write_text(
-        stream.model_dump_json(indent=2, exclude={"root"}) + "\n", encoding="utf-8"
-    )
+    (out_dir / STREAM_FILE).write_text(stream.stream_json(), encoding="utf-8")
     _log.info(
         "generated stream %s (seed %d): migrations %s, %d questions",
         stream_id,

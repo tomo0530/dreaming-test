@@ -6,7 +6,7 @@ from typing import Final, Literal
 
 from project_module.agent.context import ArmContext
 from project_module.config import ArmName
-from project_module.contracts import ConsolidationRecord, ToolSet
+from project_module.contracts import ConsolidationRecord, TaskQuestion, ToolSet
 from project_module.memory.store import MemoryStore
 from project_module.memory.tools import MemoryReadTools
 from project_module.retrieval import HybridIndex, TranscriptSearchTools
@@ -36,6 +36,9 @@ class StatelessArm:
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return None
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return None
@@ -68,6 +71,9 @@ class RawRagArm:
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._search_tools(ctx, session, "online")
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._search_tools(ctx, session, "probe")
@@ -147,6 +153,9 @@ class OracleArm:
 
     def online_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._read_tools(ctx)
+
+    def question_context(self, ctx: ArmContext, question: TaskQuestion) -> str:
+        return ""
 
     def probe_tools(self, ctx: ArmContext, session: int) -> ToolSet | None:
         return self._read_tools(ctx)
