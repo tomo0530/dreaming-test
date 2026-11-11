@@ -295,6 +295,19 @@ FOLLOWUP_EXPECTED: dict[str, _Expected] = {
         ),
     ),
     "fu_dev_null": _Expected("fu_dev", ["A1", "A4"], ["fu-dev-null-01"], [4211], 3, _NULL),
+    # E1 re-check of G7 after the consolidator_sql wording fix (30_run-ledger.md).
+    "fu_dev_probe": _Expected(
+        "fu_dev",
+        ["A4"],
+        _stream_ids("fu-dev", 1, 2),
+        [4201, 4202],
+        3,
+        _switches(
+            feedback="graded",
+            agent_prompt_addendum="verify_memory",
+            consolidator_sql=True,
+        ),
+    ),
     **_run_variants("pilot", "fu_pilot", "fu-pilot", 4301, 6),
     **_run_variants("pilot_rev", "fu_pilot_rev", "fu-pilot-rev", 4401, 6),
     "fu_fb0": _Expected(
