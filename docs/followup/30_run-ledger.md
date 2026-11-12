@@ -62,3 +62,9 @@
 
 - `scripts/analyze_followup.py` を 6 run（fb0・fb1・verify・probe・null・sens）と CL-Bench 2 run（前回 `clbench-20261110T141842Z`、追試 `fu_clbench-20261111T065520Z`）で実行し、`docs/followup/artifacts/followup-metrics.json` に出力した。主解析は 40/40 ストリーム、除外 0 件。
 - 追試の最終費用: `fu_dev` $1.73、`fu_pilot` $3.38、`fu_main` $36.82、`fu_aux` $19.88、`fu_clbench` $3.78（追試計 $65.59）。累計 $77.44（絶対上限 $200）。
+
+### R2 最終レビュー（2026-11-12）
+
+- Opus xhigh: APPROVE（minor 7 件を反映）。
+- Codex gpt-6.1-sol xhigh: 第 1 ラウンド REQUEST_CHANGES（3 件）、第 2 ラウンド REQUEST_CHANGES（minor 1 件）。いずれも反映した。
+- **手順上の逸脱（軽微）**: 第 2 ラウンドの minor 1 件を提案どおりの文面で反映したあと、Codex の再確認を待たずに PR #11 をマージした。マージ後に第 3 ラウンドを行い、Codex は APPROVE した（第 2 ラウンドからの本文差分は当該 1 行だけで、新たな指摘 0 件）。マージした内容は変わっていない。
