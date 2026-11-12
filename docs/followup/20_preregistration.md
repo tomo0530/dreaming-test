@@ -1,6 +1,6 @@
 # 追試の事前登録（本番開始前に凍結）
 
-- 作成日: 2026-11-11（草案、R0 レビュー反映済み）、凍結: 未
+- 作成日: 2026-11-11（草案、R0 レビュー反映済み）、凍結: 2026-11-11（pilot の gate 通過後、`fu_main`・`fu_aux` の最初の API 呼び出しより前）
 - **凍結の手順**:
   - gate（[00_design.md](00_design.md) §7）の通過後、phase `fu_main` と `fu_aux` の最初の API 呼び出しより前に凍結する。
   - 本書 §6 の「凍結時に埋める欄」を埋めて commit し、その SHA を `30_run-ledger.md` と `40_results.md` に記録する。
@@ -109,9 +109,9 @@
 
 | 項目 | 値 |
 |---|---|
-| gate の結果（00_design §7 の G0〜G7） | |
-| 本番のストリーム数（`fu`、`fu-null`） | 40、10（予定） |
-| 本番の seed 範囲 | 4001〜4040、4101〜4110（予定） |
-| `configs/experiments/followup/` の本番 yaml の SHA-256 | |
-| 本番の各 `stream.json` の SHA-256（先頭 16 桁。全桁は run の manifest.json） | |
-| コードの commit SHA | |
+| gate の結果（00_design §7 の G0〜G7） | 合格（G0〜G7 すべて）。pilot run `fu_pilot_*-20261111T043206Z`。G6 の見込み: `fu_main` $47.64（枠 $52）、`fu_aux` $20.34（枠 $25）。全値は [artifacts/followup-gate.json](artifacts/followup-gate.json) |
+| 本番のストリーム数（`fu`、`fu-null`） | 40、10 |
+| 本番の seed 範囲 | 4001〜4040、4101〜4110 |
+| `configs/experiments/followup/` の本番 yaml の SHA-256 | `fu_fb0` ec34816d205b9169cba11fb50e2452920607be369be66a42c3466f7e5d993da9、`fu_fb1` c77fa9a0e7bb70562ad2b3341799bbe192d6ca6586f05f4f924b72643c0e0331、`fu_verify` dc51cee03bad2258a4322e328b7c96e9c83b6bbdf4374031cbde02fd58c97800、`fu_probe` 9fc631ffbe2903e182ddcbb852d07c24939454dae49829d382544fd7e6840b80、`fu_null` e84215ec37993caf0d722e0f937aeb43e4745370979de296323568924d2dc560、`fu_sens` 6275328b6eb315f08403659737e0dbb92050ced08052f953c3982136d2e926d7、`fu_clbench` 37c2881ad33ae576490f38a952c817d691dc933b869b0e4d4e66818d9165ce63 |
+| 本番の各 `stream.json` の SHA-256（先頭 16 桁。全桁は run の manifest.json） | 50 本の全桁を [artifacts/main-stream-sha256.tsv](artifacts/main-stream-sha256.tsv) に記録（ファイル自体の SHA-256 は 599e8bf7ae40afd0）。凍結時に全ストリームの再計算値と一致することを確認した |
+| コードの commit SHA | `1f6c6ce`（E1 で統合役の照会断片を直した commit。gate はこのコードで実行） |

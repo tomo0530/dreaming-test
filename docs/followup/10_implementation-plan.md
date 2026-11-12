@@ -411,28 +411,28 @@ def test_e2e_fake_no_drift_stream(tmp_path): ...
 
 各段の結果は、`docs/followup/30_run-ledger.md` に日付見出しで時系列に記録する。
 
-- [ ] **E1 dev**（phase `fu_dev`）:
+- [x] **E1 dev**（phase `fu_dev`）:
   - `fu_dev.yaml` と `fu_dev_null.yaml` のストリームを生成して実行する。
   - 確認するのは機械的な指標だけ（tool 呼び出しの成功率、G2〜G5・G7 の値、`no_submission` 率、費用）。群別の正答率は見ない。
   - 必要なら `note_turn.md` と 3 つの断片の文面を直す。実測 token を run ledger に残す。
-- [ ] **E2 本番ストリームの生成、pilot と gate**（phase `fu_pilot`）:
+- [x] **E2 本番ストリームの生成、pilot と gate**（phase `fu_pilot`）:
   - 本番ストリーム（`fu-01`〜`40`、`fu-null-01`〜`10`）を生成し、検証が通ることを確かめる（G1。API 費用なし）。
   - `fu_pilot_*.yaml` の 5 run のストリームを生成して、同時に実行する。
   - `scripts/analyze_followup.py --gate` で `followup-gate.json` を出し、`docs/followup/artifacts/` に複製する。
   - **不合格なら**:
     - phase `fu_pilot_rev` で 1 回だけ直し、`fu_pilot_rev_*.yaml`（新しい seed）で、もう一度 gate を確かめる。
     - それでも不合格なら E3〜E5 を行わず、E6 で「処置の構築まで」のレポートを書いて閉じる。
-- [ ] **E3 凍結と本番**（phase `fu_main`・`fu_aux`）:
+- [x] **E3 凍結と本番**（phase `fu_main`・`fu_aux`）:
   - `20_preregistration.md` §6 を埋めて commit し、凍結する。
   - `fu_fb0`・`fu_fb1`・`fu_verify`・`fu_probe`・`fu_null` を同時に開始する。中断したジョブは `--resume` で完走させる。
-- [ ] **E4 CL-Bench**（phase `fu_clbench`）: E3 と並行で `fu_clbench.yaml` を実行する（15 反復）。
-- [ ] **E5 感度分析**（任意）:
+- [x] **E4 CL-Bench**（phase `fu_clbench`）: E3 と並行で `fu_clbench.yaml` を実行する（15 反復）。
+- [x] **E5 感度分析**（任意）:
   - `fu_aux` の必須 run が終わった後、`fu_aux` の残りが $8 以上あれば `fu_sens.yaml` を実行する。
   - 満たさなければ実行せず、その旨を run ledger に書く。
-- [ ] **E6 解析・レポート・Notion**:
+- [x] **E6 解析・レポート・Notion**:
   - `scripts/analyze_followup.py` で `followup-metrics.json` を出し、`docs/followup/artifacts/` に複製する。
   - `docs/followup/40_results.md`（日本語）を書く。内容は、主仮説の判定、副次・探索的指標、除外と欠測の感度分析、逸脱の有無、費用、示せたこと / 示せていないこと。
   - 既存の Notion ページ（Dreaming: Trying out Dreaming）に、追試の節を追記する。
-- [ ] **R2**:
+- [x] **R2**:
   - Opus xhigh と Codex gpt-6.1-sol xhigh に、`40_results.md`・artifacts・run ledger をまとめてレビューさせる。
   - APPROVE を得てから PR を作ってマージし、不要な worktree を削除する。
